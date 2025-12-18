@@ -11,6 +11,10 @@ namespace EbookReader.Core.Entities
         public DateTime UploadedAt { get; set; }
         public bool CharactersAnalyzed { get; set; }
         
+        // User relationship
+        public Guid UserId { get; set; }
+        public User User { get; set; } = null!;
+        
         public ICollection<Character> Characters { get; set; } = new List<Character>();
         public ICollection<Chapter> Chapters { get; set; } = new List<Chapter>();
         public ICollection<ReadingProgress> ReadingProgresses { get; set; } = new List<ReadingProgress>();
