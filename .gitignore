@@ -61,6 +61,10 @@ build/
 .env.*.local
 appsettings.Local.json
 
+# Logs
+logs/
+*.log
+
 # IDE
 *.swp
 *.swo

@@ -28,6 +28,10 @@ This is an AI-powered ebook reader application that enables users to read books 
   - `EbookReader.Infrastructure`: Database context and external services
 - **Database**: PostgreSQL 16 (Npgsql.EntityFrameworkCore.PostgreSQL 8.0.11)
 - **API Documentation**: Swagger/OpenAPI
+- **Background Jobs**: Hangfire with PostgreSQL storage
+- **Logging**: Serilog with console and file sinks
+- **File Storage**: Abstracted (IFileStorageService) supporting both Azure Blob Storage and local filesystem
+- **Ebook Parser**: VersOne.Epub 3.3.4 for EPUB format
 
 ### AI & Services
 - **Character Analysis**: Azure OpenAI (GPT-4o or GPT-3.5-turbo)
@@ -61,23 +65,49 @@ This is an AI-powered ebook reader application that enables users to read books 
 
 ### Key Design Decisions
 
-1. **On-Demand Audio Generation**: Don't pre-convert entire books
+1. **Ebook Format Support**: EPUB only (MVP)
+   - Use VersOne.Epub 3.3.4 parser
+   - Add PDF support in future phases
+   - MOBI/AZW require conversion to EPUB
+
+2. **File Storage Strategy**: Environment-based abstraction
+   - `IFileStorageService` interface supports multiple backends
+   - **Local**: Default for development and self-hosted Debian
+   - **Azure Blob**: Production Azure deployments
+   - Configure via `FileStorage:Type` in appsettings.json
+
+3. **Audio Format**: MP3 64kbps, 24kHz sample rate
+   - Best balance of file size (~7MB/hour) and speech quality
+   - Generated on-demand, cached for reuse
+   - Reduces TTS costs significantly
+
+4. **Background Job Processing**: Hangfire with PostgreSQL
+   - Long-running tasks (character analysis, TTS generation)
+   - Web dashboard at `/hangfire` (development only)
+   - Same database as application data
+
+5. **Monitoring & Logging**: Serilog
+   - Structured logging to console and rolling files
+   - 7-day log retention
+   - Logs stored in `logs/` directory (gitignored)
+
+6. **On-Demand Audio Generation**: Don't pre-convert entire books
    - Generate audio chapter by chapter as user progresses
    - Cache generated audio for reuse
    - Reduces TTS costs significantly
 
-2. **Character Voice Assignment**:
+7. **Character Voice Assignment**:
    - Step 1: Use Azure OpenAI to analyze book and identify main characters
    - Step 2: Present characters to user
    - Step 3: User selects voice for each character (or use AI suggestions)
    - Step 4: Store voice assignments in database
 
-3. **Playback Speed**: Client-side control
+8. **Playback Speed**: Client-side control
    - Use HTML5 Audio API `playbackRate` property
    - No need to regenerate audio at different speeds
    - User preference stored per book
 
-4. **CORS Configuration**: Frontend (localhost:5173) allowed in development
+9. **CORS Configuration**: Frontend (localhost:5173) allowed in development
 
 ## Project Structure
 
@@ -139,6 +169,7 @@ dotnet run --urls "http://localhost:5000"
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:5000
 - Swagger: http://localhost:5000/swagger
+- Hangfire Dashboard: http://localhost:5000/hangfire
 - Database: localhost:5432
 
 ### Environment Variables

@@ -5,7 +5,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.22.2" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <PackageReference Include="VersOne.Epub" Version="3.3.4" />
   </ItemGroup>
 
   <PropertyGroup>
