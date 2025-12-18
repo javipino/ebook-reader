@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-
-const API_URL = import.meta.env.VITE_API_URL || 'https://localhost:5001'
+import { useAuth } from '../contexts/AuthContext'
+import { authApi } from '../services/api'
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
@@ -12,6 +11,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { login } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -19,17 +19,12 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
-      const payload = isLogin 
-        ? { username, password }
-        : { username, email, password }
-
-      const response = await axios.post(`${API_URL}${endpoint}`, payload)
+      const response = isLogin 
+        ? await authApi.login(username, password)
+        : await authApi.register(username, email, password)
       
-      // Store token in localStorage
-      localStorage.setItem('token', response.data.token)
-      localStorage.setItem('username', response.data.username)
-      localStorage.setItem('userId', response.data.userId)
+      // Store token and update auth context
+      login(response.data.token, response.data.username, response.data.userId)
       
       // Redirect to library
       navigate('/library')
