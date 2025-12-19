@@ -18,11 +18,9 @@ export default function BookCover({ bookId, coverImageUrl, className = '', child
 
     const fetchCover = async () => {
       if (!coverImageUrl) {
-        // No cover URL - try to extract it
         try {
           const extractResponse = await api.post(`/api/books/${bookId}/extract-cover`);
           if (extractResponse.data?.coverImageUrl) {
-            // Cover extracted successfully, now fetch it
             const response = await api.get(extractResponse.data.coverImageUrl, {
               responseType: 'blob'
             });
@@ -33,7 +31,7 @@ export default function BookCover({ bookId, coverImageUrl, className = '', child
             return;
           }
         } catch {
-          // Extraction failed, show placeholder
+          // Extraction failed
         }
         setLoading(false);
         setError(true);
@@ -44,12 +42,11 @@ export default function BookCover({ bookId, coverImageUrl, className = '', child
         const response = await api.get(coverImageUrl, {
           responseType: 'blob'
         });
-        
+
         blobUrl = URL.createObjectURL(response.data);
         setImageUrl(blobUrl);
         setError(false);
       } catch (err: any) {
-        // If 404, try to extract the cover
         if (err.response?.status === 404) {
           try {
             const extractResponse = await api.post(`/api/books/${bookId}/extract-cover`);
@@ -76,7 +73,6 @@ export default function BookCover({ bookId, coverImageUrl, className = '', child
 
     fetchCover();
 
-    // Cleanup blob URL on unmount
     return () => {
       if (blobUrl) {
         URL.revokeObjectURL(blobUrl);
@@ -103,7 +99,7 @@ export default function BookCover({ bookId, coverImageUrl, className = '', child
   }
 
   return (
-    <div 
+    <div
       className={`bg-cover bg-center ${className}`}
       style={{ backgroundImage: `url(${imageUrl})` }}
     >

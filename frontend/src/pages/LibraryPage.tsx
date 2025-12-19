@@ -1,21 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { Book } from '../types';
 import BookCover from '../components/BookCover';
+import { LoadingSpinner, ErrorAlert } from '../components/ui';
 
-interface Book {
-  id: string;
-  title: string;
-  author: string;
-  description?: string;
-  uploadedAt: string;
-  charactersAnalyzed: boolean;
-  coverImageUrl?: string;
+interface BookWithProgress extends Book {
   readingProgress?: number;
 }
 
 export default function LibraryPage() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const [books, setBooks] = useState<BookWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -32,24 +27,22 @@ export default function LibraryPage() {
     try {
       const response = await api.get<Book[]>('/api/books');
       const booksData = response.data;
-      
-      // Fetch reading progress for each book
+
       const booksWithProgress = await Promise.all(
-        booksData.map(async (book) => {
+        booksData.map(async (book: Book) => {
           try {
             const progressResponse = await api.get(`/api/readingprogress/${book.id}`);
             const progress = progressResponse.data;
-            // Calculate percentage (simplified - based on chapter number)
-            const percentage = Math.round((progress.currentChapterNumber / 142) * 100); // TODO: use actual chapter count
+            const percentage = Math.round((progress.currentChapterNumber / 142) * 100);
             return { ...book, readingProgress: percentage };
           } catch {
             return { ...book, readingProgress: 0 };
           }
         })
       );
-      
+
       setBooks(booksWithProgress);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching books:', err);
       setError('Failed to load books');
     } finally {
@@ -58,7 +51,6 @@ export default function LibraryPage() {
   };
 
   const handleFileSelect = async (file: File) => {
-    // Validate file
     if (!file.name.endsWith('.epub')) {
       setError('Only EPUB files are supported');
       return;
@@ -81,7 +73,7 @@ export default function LibraryPage() {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        onUploadProgress: (progressEvent) => {
+        onUploadProgress: (progressEvent: { loaded: number; total?: number }) => {
           if (progressEvent.total) {
             const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
             setUploadProgress(progress);
@@ -91,8 +83,6 @@ export default function LibraryPage() {
 
       setBooks([...books, response.data]);
       setUploadProgress(0);
-      
-      // Auto-open the newly uploaded book
       navigate(`/reader/${response.data.id}`);
     } catch (err: any) {
       console.error('Error uploading book:', err);
@@ -136,7 +126,7 @@ export default function LibraryPage() {
     try {
       await api.delete(`/api/books/${bookId}`);
       setBooks(books.filter(b => b.id !== bookId));
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error deleting book:', err);
       setError('Failed to delete book');
     }
@@ -145,10 +135,7 @@ export default function LibraryPage() {
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-          <p className="mt-4 text-gray-600">Loading your library...</p>
-        </div>
+        <LoadingSpinner message="Loading your library..." />
       </div>
     );
   }
@@ -164,7 +151,7 @@ export default function LibraryPage() {
         >
           {uploading ? (
             <>
-              <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+              <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2" />
               Uploading {uploadProgress}%
             </>
           ) : (
@@ -186,18 +173,11 @@ export default function LibraryPage() {
       </div>
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-red-800">{error}</p>
-          <button
-            onClick={() => setError(null)}
-            className="mt-2 text-sm text-red-600 hover:text-red-800"
-          >
-            Dismiss
-          </button>
+        <div className="mb-4">
+          <ErrorAlert message={error} onDismiss={() => setError(null)} />
         </div>
       )}
 
-      {/* Drag and Drop Zone */}
       {books.length === 0 && !uploading && (
         <div
           onDrop={handleDrop}
@@ -220,7 +200,6 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Book Grid */}
       {books.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {books.map((book) => (
@@ -234,10 +213,8 @@ export default function LibraryPage() {
                 coverImageUrl={book.coverImageUrl}
                 className="w-full h-full rounded-lg"
               >
-                {/* Gradient overlay for text readability */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                
-                {/* Book info overlay */}
+
                 <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                   <h3 className="text-sm font-bold line-clamp-2 drop-shadow-lg">
                     {book.title}
@@ -254,7 +231,6 @@ export default function LibraryPage() {
                   </div>
                 </div>
 
-                {/* Hover actions */}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                   <button
                     onClick={(e) => {
