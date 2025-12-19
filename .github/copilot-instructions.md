@@ -58,10 +58,11 @@ This is an AI-powered ebook reader application that enables users to read books 
 ## Architecture Patterns
 
 ### Database Schema
-- **Book**: Core entity containing title, author, file path, upload date
+- **User**: Authentication entity with Id (GUID), Username (unique), Email (unique), PasswordHash (BCrypt), CreatedAt, LastLoginAt
+- **Book**: Core entity with UserId foreign key, title, author, file path, upload date (user-specific libraries)
 - **Character**: Linked to Book, stores character name, description, assigned voice
 - **Chapter**: Book content split into chapters for efficient TTS processing
-- **ReadingProgress**: Tracks user's current position per book
+- **ReadingProgress**: Tracks user's current position per book (UserId foreign key)
 
 ### Key Design Decisions
 
@@ -76,8 +77,8 @@ This is an AI-powered ebook reader application that enables users to read books 
    - **Azure Blob**: Production Azure deployments
    - Configure via `FileStorage:Type` in appsettings.json
 
-3. **Audio Format**: MP3 64kbps, 24kHz sample rate
-   - Best balance of file size (~7MB/hour) and speech quality
+3. **Audio Format**: MP3 128kbps, 24kHz sample rate
+   - Best balance of file size and speech quality
    - Generated on-demand, cached for reuse
    - Reduces TTS costs significantly
 
@@ -107,7 +108,14 @@ This is an AI-powered ebook reader application that enables users to read books 
    - No need to regenerate audio at different speeds
    - User preference stored per book
 
-9. **CORS Configuration**: Frontend (localhost:5173) allowed in development
+9. **CORS Configuration**: Frontend (localhost:5173, localhost:5174) allowed in development
+
+10. **Authentication**: JWT-based authentication with BCrypt password hashing
+   - 30-day token expiration (43200 minutes)
+   - Tokens stored in localStorage on frontend
+   - Axios interceptors auto-inject Bearer token
+   - 401 responses trigger automatic logout
+   - All books and reading progress are user-specific
 
 ## Project Structure
 
@@ -115,9 +123,10 @@ This is an AI-powered ebook reader application that enables users to read books 
 ebook_reader/
 ├── frontend/                    # React application
 │   ├── src/
-│   │   ├── components/         # Reusable components (Layout, etc.)
-│   │   ├── pages/              # Route pages (Home, Library, Reader)
-│   │   ├── services/           # API client (api.ts)
+│   │   ├── components/         # Reusable components (Layout, ProtectedRoute)
+│   │   ├── contexts/           # React contexts (AuthContext)
+│   │   ├── pages/              # Route pages (Home, Library, Reader, LoginPage)
+│   │   ├── services/           # API client (api.ts with JWT interceptors)
 │   │   ├── App.tsx             # Main app component with routing
 │   │   └── main.tsx            # Entry point
 │   ├── package.json
@@ -126,14 +135,16 @@ ebook_reader/
 │   └── Dockerfile
 ├── backend/
 │   ├── EbookReader.API/        # Web API controllers
-│   │   ├── Controllers/        # BooksController, etc.
-│   │   ├── Program.cs          # App configuration & DI
-│   │   └── appsettings.*.json  # Configuration
+│   │   ├── Controllers/        # BooksController, AuthController
+│   │   ├── Program.cs          # App configuration & DI, JWT setup
+│   │   └── appsettings.*.json  # Configuration (JWT, FileStorage, Audio)
 │   ├── EbookReader.Core/       # Domain layer
-│   │   └── Entities/           # Book, Character, Chapter, ReadingProgress
+│   │   ├── Entities/           # User, Book, Character, Chapter, ReadingProgress
+│   │   └── Interfaces/         # IFileStorageService
 │   ├── EbookReader.Infrastructure/  # Data layer
-│   │   └── Data/
-│   │       └── EbookReaderDbContext.cs
+│   │   ├── Data/
+│   │   │   └── EbookReaderDbContext.cs
+│   │   └── Services/           # LocalFileStorageService, AzureBlobStorageService
 │   ├── EbookReader.sln
 │   └── Dockerfile
 ├── infrastructure/             # Azure deployment (Bicep)
@@ -159,17 +170,17 @@ cd C:\Repos\Training\ebook_reader
 docker-compose up -d
 ```
 
-**Backend (Run Locally)**
+**Backend (Run Locally with HTTPS)**
 ```bash
 cd backend/EbookReader.API
-dotnet run --urls "http://localhost:5000"
+dotnet run --launch-profile https
 ```
 
 **Access Points**:
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:5000
-- Swagger: http://localhost:5000/swagger
-- Hangfire Dashboard: http://localhost:5000/hangfire
+- Frontend: http://localhost:5174 (or 5173 if available)
+- Backend API: https://localhost:5001 (HTTP: http://localhost:5000)
+- Swagger: https://localhost:5001/swagger
+- Hangfire Dashboard: https://localhost:5001/hangfire
 - Database: localhost:5432
 
 ### Environment Variables
@@ -216,11 +227,15 @@ VITE_API_URL=http://localhost:5000
 
 ## API Endpoints (Current & Planned)
 
-**Books**
-- `GET /api/books` - List all books
-- `GET /api/books/{id}` - Get book details
-- `POST /api/books` - Create/upload book
-- `DELETE /api/books/{id}` - Delete book
+**Authentication**
+- `POST /api/auth/register` - Register new user (username, email, password)
+- `POST /api/auth/login` - Login and receive JWT token
+
+**Books** (Require JWT authentication)
+- `GET /api/books` - List current user's books
+- `GET /api/books/{id}` - Get book details (user must own book)
+- `POST /api/books` - Upload book for current user (planned)
+- `DELETE /api/books/{id}` - Delete user's book (planned)
 - `POST /api/books/{id}/analyze-characters` - Trigger AI character analysis (planned)
 
 **Characters**
@@ -239,11 +254,14 @@ VITE_API_URL=http://localhost:5000
 
 ### Phase 1: MVP (Current)
 - [x] Basic project structure
-- [x] Database schema
-- [x] Frontend UI skeleton
+- [x] Database schema with User entity
+- [x] Frontend UI skeleton with routing
+- [x] User authentication (JWT)
+- [x] Protected routes
+- [x] User-specific data isolation
 - [ ] Book upload functionality
 - [ ] Basic reader view
-- [ ] Chapter parsing
+- [ ] Chapter parsing with VersOne.Epub
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
@@ -257,7 +275,8 @@ VITE_API_URL=http://localhost:5000
 - [ ] Playback speed controls
 - [ ] Bookmarks and highlights
 - [ ] Audio caching strategy
-- [ ] User authentication
+- [ ] User profile management
+- [ ] Password reset functionality
 
 ### Phase 4: External Integrations
 - [ ] Amazon Kindle API integration
@@ -279,12 +298,13 @@ VITE_API_URL=http://localhost:5000
 ## Known Issues & Technical Debt
 
 1. **Docker Backend**: Backend Dockerfile needs fixing - currently running .NET locally instead
-2. **PostCSS Config**: Fixed to use ES module syntax for Vite compatibility
-3. **Authentication**: Not implemented yet - all endpoints are public
-4. **DTOs**: Using entities directly in API responses (should add DTOs)
-5. **Error Handling**: Basic error handling needs improvement
-6. **Validation**: Input validation needs to be added to API endpoints
-7. **Migrations**: EF migrations not set up yet
+2. **DTOs**: Using entities directly in API responses (should add DTOs)
+3. **Error Handling**: Basic error handling needs improvement
+4. **Validation**: Input validation needs to be added to API endpoints (email format, password strength)
+5. **Refresh Tokens**: Currently using long-lived tokens (30 days), should implement refresh token pattern
+6. **Password Reset**: No password reset functionality yet
+7. **Email Verification**: Email addresses are not verified
+8. **Rate Limiting**: No rate limiting on authentication endpoints
 
 ## Testing Strategy (Future)
 
@@ -295,12 +315,18 @@ VITE_API_URL=http://localhost:5000
 
 ## Security Considerations
 
-- [ ] Add authentication (Azure AD B2C recommended)
-- [ ] Implement authorization for book access
+- [x] JWT authentication with BCrypt password hashing
+- [x] User-specific authorization for book access
+- [ ] Add refresh token pattern (currently using long-lived tokens)
+- [ ] Email verification for new accounts
+- [ ] Password reset functionality
+- [ ] Rate limiting on authentication endpoints
 - [ ] Sanitize file uploads
 - [ ] Validate ebook file formats
 - [ ] Rate limiting on TTS endpoints
 - [ ] Secure storage of API keys (Azure Key Vault)
+- [ ] HTTPS enforcement in production
+- [ ] Consider Azure AD B2C for enterprise (future)
 
 ## Performance Considerations
 
@@ -325,3 +351,64 @@ VITE_API_URL=http://localhost:5000
 - ElevenLabs Pricing: Starting at $5/month for 30K characters
 - React Router v6: https://reactrouter.com/
 - Entity Framework Core: https://learn.microsoft.com/ef/core/
+- JWT Authentication: https://jwt.io/
+- BCrypt.Net: https://github.com/BcryptNet/bcrypt.net
+
+---
+
+## Documentation Maintenance Guidelines
+
+**CRITICAL**: When implementing new features, making architectural changes, or resolving technical debt, ALWAYS update both:
+
+1. **README.md** (user-facing documentation)
+2. **This file** (`.github/copilot-instructions.md` - AI development guidelines)
+
+### What to Update When
+
+**New Feature Implementation:**
+- Add to Features section in README
+- Update Tech Stack if new libraries added
+- Document new API endpoints
+- Update Database Schema if entities changed
+- Add to Coding Conventions if new patterns introduced
+- Check off roadmap items
+- Update Project Structure if new directories/files
+
+**Bug Fixes:**
+- Remove from Known Issues & Technical Debt
+- Update relevant code examples if patterns changed
+
+**Configuration Changes:**
+- Update Environment Variables section
+- Update appsettings.json examples
+- Update docker-compose.yml references
+
+**Dependency Updates:**
+- Update version numbers in Tech Stack
+- Note breaking changes in Known Issues if applicable
+
+**Architecture Changes:**
+- Update Key Design Decisions
+- Update Architecture Patterns
+- Update Project Structure
+- Update Coding Conventions
+
+### Sections Requiring Frequent Updates
+
+- **Tech Stack Decisions**: Library versions, new packages
+- **Database Schema**: Entity changes, relationships
+- **API Endpoints**: New endpoints, authentication requirements
+- **Roadmap**: Check off completed items, add new phases
+- **Known Issues**: Remove resolved, add new blockers
+- **Security Considerations**: Check off implemented items
+- **Project Structure**: New directories, important files
+
+### Best Practices
+
+1. **Be Specific**: Include version numbers, exact file paths, command examples
+2. **Keep It Current**: Update immediately when implementing changes, not later
+3. **Be Honest**: Document technical debt and known issues clearly
+4. **Think Future**: These docs guide future development decisions
+5. **User Perspective**: README should help users; copilot-instructions help developers/AI
+
+**Remember**: Good documentation prevents confusion, ensures consistency, and accelerates development. Treat it as part of the code, not an afterthought.

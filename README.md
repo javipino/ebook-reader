@@ -4,7 +4,8 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 
 ## Features
 
-- 📚 Ebook reading and management
+- � User authentication with JWT tokens
+- 📚 Ebook reading and management (per-user libraries)
 - 🎭 AI-powered character identification
 - 🔊 Text-to-speech with character-specific voices
 - 🔄 Amazon Kindle integration (planned)
@@ -16,11 +17,18 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 - React 19 with TypeScript
 - Vite for build tooling
 - TailwindCSS for styling
+- React Router v6 for routing
+- Axios for HTTP client
+- Context API for authentication state
 
 ### Backend
 - .NET 8 Web API
-- Entity Framework Core
-- PostgreSQL 16
+- Entity Framework Core 8.0.11
+- PostgreSQL 16 (Npgsql provider)
+- JWT Authentication (Microsoft.AspNetCore.Authentication.JwtBearer 8.0.11)
+- BCrypt.Net-Next 4.0.3 for password hashing
+- Hangfire 1.8.17 for background jobs
+- Serilog 8.0.3 for structured logging
 
 ### AI Services
 - Azure OpenAI (character analysis)
@@ -90,30 +98,68 @@ npm run dev
 
 ## API Endpoints
 
-- `GET /api/books` - List all books
+### Authentication
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - Login and receive JWT token
+
+### Books (Authenticated)
+- `GET /api/books` - List user's books
 - `GET /api/books/{id}` - Get book details
 - `POST /api/books` - Upload new book
-- `GET /api/books/{id}/characters` - Get identified characters
-- `POST /api/audio/convert` - Convert text to speech
+- `DELETE /api/books/{id}` - Delete book
+- `GET /api/books/{id}/characters` - Get identified characters (planned)
+- `POST /api/audio/convert` - Convert text to speech (planned)
 
 ## Environment Variables
 
-### Backend (.NET)
-```
-AZURE_OPENAI_ENDPOINT=your_endpoint
-AZURE_OPENAI_KEY=your_key
-GOOGLE_CLOUD_TTS_KEY=your_key
-ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=EbookReader;Username=postgres;Password=postgres
+### Backend (appsettings.json)
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=EbookReader;Username=postgres;Password=postgres"
+  },
+  "Jwt": {
+    "Secret": "your-super-secret-key-min-32-chars",
+    "Issuer": "EbookReaderAPI",
+    "Audience": "EbookReaderClient",
+    "ExpirationMinutes": 43200
+  },
+  "FileStorage": {
+    "Type": "Local",
+    "LocalPath": "uploads",
+    "AzureBlobConnectionString": "",
+    "AzureBlobContainerName": "ebooks"
+  },
+  "Audio": {
+    "Format": "mp3",
+    "Bitrate": 128,
+    "SampleRate": 24000
+  }
+}
 ```
 
-### Frontend (React)
+### Frontend (.env)
 ```
-VITE_API_URL=http://localhost:5000
+VITE_API_URL=https://localhost:5001
 ```
 
 ## Deployment
 
 Deployment to Azure is configured via GitHub Actions (see `.github/workflows`).
+
+## Documentation Maintenance
+
+**Important**: When implementing new features or making architectural changes, always update:
+1. This README.md file (user-facing documentation)
+2. `.github/copilot-instructions.md` (AI assistant development guidelines)
+
+Key sections to update:
+- **Features**: Add new capabilities to the features list
+- **Tech Stack**: Document new libraries or version changes
+- **API Endpoints**: Add/update endpoint documentation
+- **Database Schema**: Reflect entity changes
+- **Known Issues**: Remove resolved items, add new blockers
+- **Roadmap**: Check off completed items, add new phases
 
 ## License
 
