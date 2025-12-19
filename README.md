@@ -4,12 +4,13 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 
 ## Features
 
-- � User authentication with JWT tokens
-- 📚 Ebook reading and management (per-user libraries)
-- 🎭 AI-powered character identification
-- 🔊 Text-to-speech with character-specific voices
-- 🔄 Amazon Kindle integration (planned)
-- 📱 Cross-platform support (Web first, mobile later)
+- User authentication with JWT tokens
+- Ebook reading and management (per-user libraries)
+- EPUB upload + parsing into chapters
+- AI-powered character identification (planned)
+- Text-to-speech with character-specific voices (planned)
+- Amazon Kindle integration (planned)
+- Cross-platform support (Web first, mobile later)
 
 ## Tech Stack
 
@@ -70,31 +71,31 @@ ebook-reader/
 
 ### Local Development
 
-1. **Clone the repository**
+This project is set up to run via Docker Compose (frontend + backend + database).
+
+1. **Start everything**
 ```bash
 cd C:\Repos\Training\ebook_reader
+docker-compose up -d --build
 ```
 
-2. **Start with Docker Compose**
+2. **Access points**
+- Frontend: http://localhost:5174
+- Backend API (HTTP): http://localhost:5000
+- Backend API (HTTPS): https://localhost:5001
+- Swagger (HTTPS): https://localhost:5001/swagger
+- Hangfire (HTTPS): https://localhost:5001/hangfire
+- PostgreSQL: localhost:5432
+
+3. **HTTPS development certificate (Windows)**
+
+The backend container uses a development certificate mounted from your user profile.
+If you haven't generated it yet:
 ```bash
-docker-compose up
+dotnet dev-certs https -ep "%USERPROFILE%\\.aspnet\\https\\aspnetapp.pfx" -p yourpassword
 ```
 
-3. **Or run services individually:**
-
-**Backend:**
-```bash
-cd backend
-dotnet restore
-dotnet run
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
+The password must match the value configured in `docker-compose.yml`.
 
 ## API Endpoints
 
@@ -142,6 +143,12 @@ npm run dev
 ```
 VITE_API_URL=https://localhost:5001
 ```
+
+## React StrictMode
+
+React StrictMode is recommended during development because it helps surface unsafe patterns.
+However, in development it can intentionally run certain effects twice (so you may see duplicate API calls).
+This does not happen in production builds.
 
 ## Deployment
 

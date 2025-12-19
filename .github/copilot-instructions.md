@@ -164,24 +164,32 @@ ebook_reader/
 
 ### Local Development
 
-**Option 1: Docker Compose (Frontend + Database)**
+**Docker Compose (Frontend + Backend + Database)**
 ```bash
 cd C:\Repos\Training\ebook_reader
-docker-compose up -d
-```
-
-**Backend (Run Locally with HTTPS)**
-```bash
-cd backend/EbookReader.API
-dotnet run --launch-profile https
+docker-compose up -d --build
 ```
 
 **Access Points**:
-- Frontend: http://localhost:5174 (or 5173 if available)
-- Backend API: https://localhost:5001 (HTTP: http://localhost:5000)
-- Swagger: https://localhost:5001/swagger
-- Hangfire Dashboard: https://localhost:5001/hangfire
+- Frontend: http://localhost:5174
+- Backend API (HTTPS): https://localhost:5001 (HTTP: http://localhost:5000)
+- Swagger (HTTPS): https://localhost:5001/swagger
+- Hangfire Dashboard (HTTPS): https://localhost:5001/hangfire
 - Database: localhost:5432
+
+**HTTPS dev certificate (Windows)**
+
+The backend container mounts a dev certificate from the host at `%USERPROFILE%\.aspnet\https\aspnetapp.pfx`.
+Generate it if missing:
+```bash
+dotnet dev-certs https -ep "%USERPROFILE%\\.aspnet\\https\\aspnetapp.pfx" -p yourpassword
+```
+
+The password must match `ASPNETCORE_Kestrel__Certificates__Default__Password` in `docker-compose.yml`.
+
+**Storage**
+
+Uploads and generated assets are persisted via the `backend-storage` Docker volume (mounted at `/app/storage`).
 
 ### Environment Variables
 
@@ -196,7 +204,7 @@ ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=EbookRead
 
 **Frontend (.env)**:
 ```
-VITE_API_URL=http://localhost:5000
+VITE_API_URL=https://localhost:5001
 ```
 
 ## Coding Conventions
@@ -234,8 +242,8 @@ VITE_API_URL=http://localhost:5000
 **Books** (Require JWT authentication)
 - `GET /api/books` - List current user's books
 - `GET /api/books/{id}` - Get book details (user must own book)
-- `POST /api/books` - Upload book for current user (planned)
-- `DELETE /api/books/{id}` - Delete user's book (planned)
+- `POST /api/books` - Upload book for current user
+- `DELETE /api/books/{id}` - Delete user's book
 - `POST /api/books/{id}/analyze-characters` - Trigger AI character analysis (planned)
 
 **Characters**
@@ -259,9 +267,9 @@ VITE_API_URL=http://localhost:5000
 - [x] User authentication (JWT)
 - [x] Protected routes
 - [x] User-specific data isolation
-- [ ] Book upload functionality
+- [x] Book upload functionality
 - [ ] Basic reader view
-- [ ] Chapter parsing with VersOne.Epub
+- [x] Chapter parsing with VersOne.Epub
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
@@ -297,14 +305,13 @@ VITE_API_URL=http://localhost:5000
 
 ## Known Issues & Technical Debt
 
-1. **Docker Backend**: Backend Dockerfile needs fixing - currently running .NET locally instead
-2. **DTOs**: Using entities directly in API responses (should add DTOs)
-3. **Error Handling**: Basic error handling needs improvement
-4. **Validation**: Input validation needs to be added to API endpoints (email format, password strength)
-5. **Refresh Tokens**: Currently using long-lived tokens (30 days), should implement refresh token pattern
-6. **Password Reset**: No password reset functionality yet
-7. **Email Verification**: Email addresses are not verified
-8. **Rate Limiting**: No rate limiting on authentication endpoints
+1. **DTOs**: Using entities directly in API responses (should add DTOs)
+2. **Error Handling**: Basic error handling needs improvement
+3. **Validation**: Input validation needs to be added to API endpoints (email format, password strength)
+4. **Refresh Tokens**: Currently using long-lived tokens (30 days), should implement refresh token pattern
+5. **Password Reset**: No password reset functionality yet
+6. **Email Verification**: Email addresses are not verified
+7. **Rate Limiting**: No rate limiting on authentication endpoints
 
 ## Testing Strategy (Future)
 
