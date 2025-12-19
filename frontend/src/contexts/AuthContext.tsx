@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 interface AuthContextType {
   isAuthenticated: boolean
+  isLoading: boolean
   username: string | null
   userId: string | null
   login: (token: string, username: string, userId: string) => void
@@ -13,6 +14,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [username, setUsername] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const navigate = useNavigate()
@@ -28,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUsername(storedUsername)
       setUserId(storedUserId)
     }
+    setIsLoading(false)
   }, [])
 
   const login = (token: string, username: string, userId: string) => {
@@ -50,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, username, userId, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, userId, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

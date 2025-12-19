@@ -22,7 +22,7 @@ namespace EbookReader.Infrastructure.Services
             }
         }
 
-        public async Task<string> UploadFileAsync(string fileName, Stream stream, string contentType)
+        public async Task<string> UploadFileAsync(string fileName, Stream stream)
         {
             var filePath = Path.Combine(_storagePath, fileName);
             var directory = Path.GetDirectoryName(filePath);
@@ -35,7 +35,7 @@ namespace EbookReader.Infrastructure.Services
             using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             await stream.CopyToAsync(fileStream);
 
-            return filePath;
+            return fileName;
         }
 
         public async Task<Stream> DownloadFileAsync(string filePath)
@@ -77,6 +77,11 @@ namespace EbookReader.Infrastructure.Services
 
             var fileInfo = new FileInfo(filePath);
             return Task.FromResult(fileInfo.Length);
+        }
+
+        public string GetFilePath(string filePath)
+        {
+            return Path.Combine(_storagePath, filePath);
         }
     }
 }

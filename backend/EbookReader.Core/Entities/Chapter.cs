@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace EbookReader.Core.Entities
 {
     public class Chapter
@@ -11,6 +13,7 @@ namespace EbookReader.Core.Entities
         public bool AudioGenerated { get; set; }
         public string? AudioFilePath { get; set; }
         
+        [JsonIgnore]
         public Book Book { get; set; } = null!;
     }
 }

@@ -31,18 +31,13 @@ namespace EbookReader.Infrastructure.Services
             _containerClient.CreateIfNotExists();
         }
 
-        public async Task<string> UploadFileAsync(string fileName, Stream stream, string contentType)
+        public async Task<string> UploadFileAsync(string fileName, Stream stream)
         {
             var blobClient = _containerClient.GetBlobClient(fileName);
             
-            var options = new BlobUploadOptions
-            {
-                HttpHeaders = new BlobHttpHeaders { ContentType = contentType }
-            };
-
-            await blobClient.UploadAsync(stream, options);
+            await blobClient.UploadAsync(stream);
             
-            return blobClient.Uri.ToString();
+            return fileName;
         }
 
         public async Task<Stream> DownloadFileAsync(string filePath)
@@ -103,6 +98,19 @@ namespace EbookReader.Infrastructure.Services
             
             // Otherwise, it's already a blob name
             return filePath;
+        }
+
+        public string GetFilePath(string filePath)
+        {
+            // For Azure Blob, we need to download to a temp file for parsing
+            var blobName = GetBlobNameFromPath(filePath);
+            var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}{Path.GetExtension(blobName)}");
+            
+            // Download blob to temp file synchronously (not ideal but needed for EPUB parsing)
+            var blobClient = _containerClient.GetBlobClient(blobName);
+            blobClient.DownloadTo(tempPath);
+            
+            return tempPath;
         }
     }
 }

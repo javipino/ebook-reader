@@ -26,7 +26,11 @@ try
     builder.Host.UseSerilog();
 
     // Add services to the container.
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        });
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
 
@@ -44,6 +48,9 @@ else
 {
     builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 }
+
+// Book Service
+builder.Services.AddScoped<IBookService, BookService>();
 
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration

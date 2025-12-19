@@ -10,9 +10,8 @@ namespace EbookReader.Core.Interfaces
         /// </summary>
         /// <param name="fileName">Name of the file</param>
         /// <param name="stream">File content stream</param>
-        /// <param name="contentType">MIME type of the file</param>
         /// <returns>URI/path to the stored file</returns>
-        Task<string> UploadFileAsync(string fileName, Stream stream, string contentType);
+        Task<string> UploadFileAsync(string fileName, Stream stream);
 
         /// <summary>
         /// Download a file from storage
@@ -40,5 +39,12 @@ namespace EbookReader.Core.Interfaces
         /// <param name="filePath">URI/path to the file</param>
         /// <returns>File size in bytes</returns>
         Task<long> GetFileSizeAsync(string filePath);
+
+        /// <summary>
+        /// Get the local file path for a stored file
+        /// </summary>
+        /// <param name="filePath">Storage path</param>
+        /// <returns>Local filesystem path</returns>
+        string GetFilePath(string filePath);
     }
 }
