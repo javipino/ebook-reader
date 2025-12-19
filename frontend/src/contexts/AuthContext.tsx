@@ -5,8 +5,9 @@ interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
   username: string | null
+  email: string | null
   userId: string | null
-  login: (token: string, username: string, userId: string) => void
+  login: (token: string, username: string, email: string, userId: string) => void
   logout: () => void
 }
 
@@ -16,6 +17,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [username, setUsername] = useState<string | null>(null)
+  const [email, setEmail] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const navigate = useNavigate()
 
@@ -23,37 +25,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Check if user is already logged in
     const token = localStorage.getItem('token')
     const storedUsername = localStorage.getItem('username')
+    const storedEmail = localStorage.getItem('email')
     const storedUserId = localStorage.getItem('userId')
     
     if (token && storedUsername && storedUserId) {
       setIsAuthenticated(true)
       setUsername(storedUsername)
+      setEmail(storedEmail)
       setUserId(storedUserId)
     }
     setIsLoading(false)
   }, [])
 
-  const login = (token: string, username: string, userId: string) => {
+  const login = (token: string, username: string, email: string, userId: string) => {
     localStorage.setItem('token', token)
     localStorage.setItem('username', username)
+    localStorage.setItem('email', email)
     localStorage.setItem('userId', userId)
     setIsAuthenticated(true)
     setUsername(username)
+    setEmail(email)
     setUserId(userId)
   }
 
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('username')
+    localStorage.removeItem('email')
     localStorage.removeItem('userId')
     setIsAuthenticated(false)
     setUsername(null)
+    setEmail(null)
     setUserId(null)
     navigate('/login')
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, userId, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, email, userId, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

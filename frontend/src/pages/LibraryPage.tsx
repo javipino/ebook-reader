@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
+import kindleService from '../services/kindleService';
+import { toast } from 'react-hot-toast';
 import { Book } from '../types';
 import BookCover from '../components/BookCover';
 import { LoadingSpinner, ErrorAlert } from '../components/ui';
@@ -13,14 +15,17 @@ export default function LibraryPage() {
   const [books, setBooks] = useState<BookWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [kindleConnected, setKindleConnected] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchBooks();
+    checkKindleStatus();
   }, []);
 
   const fetchBooks = async () => {
@@ -47,6 +52,37 @@ export default function LibraryPage() {
       setError('Failed to load books');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkKindleStatus = async () => {
+    try {
+      const status = await kindleService.getStatus();
+      setKindleConnected(status.isConnected);
+    } catch {
+      setKindleConnected(false);
+    }
+  };
+
+  const handleSyncKindle = async () => {
+    try {
+      setSyncing(true);
+      const result = await kindleService.syncLibrary();
+      
+      if (result.success) {
+        const messages = [];
+        if (result.booksAdded > 0) messages.push(`${result.booksAdded} books added`);
+        if (result.booksUpdated > 0) messages.push(`${result.booksUpdated} books updated`);
+        
+        toast.success(messages.length > 0 ? messages.join(', ') : 'Library is up to date');
+        await fetchBooks();
+      } else {
+        toast.error(result.errorMessage || 'Sync failed');
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to sync Kindle library');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -144,33 +180,60 @@ export default function LibraryPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-gray-900">My Library</h1>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="px-6 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center"
-        >
-          {uploading ? (
-            <>
-              <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2" />
-              Uploading {uploadProgress}%
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Upload Book
-            </>
+        <div className="flex gap-3">
+          {kindleConnected && (
+            <button
+              onClick={handleSyncKindle}
+              disabled={syncing}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            >
+              {syncing ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Sync Kindle
+                </>
+              )}
+            </button>
           )}
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".epub"
-          onChange={handleFileInput}
-          className="hidden"
-        />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="px-6 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center"
+          >
+            {uploading ? (
+              <>
+                <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2" />
+                Uploading {uploadProgress}%
+              </>
+            ) : (
+              <>
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Upload Book
+              </>
+            )}
+          </button>
+        </div>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".epub"
+        onChange={handleFileInput}
+        className="hidden"
+      />
 
       {error && (
         <div className="mb-4">

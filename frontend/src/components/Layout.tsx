@@ -21,12 +21,20 @@ export default function Layout() {
                   Home
                 </Link>
                 {isAuthenticated && (
-                  <Link
-                    to="/library"
-                    className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"
-                  >
-                    Library
-                  </Link>
+                  <>
+                    <Link
+                      to="/library"
+                      className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"
+                    >
+                      Library
+                    </Link>
+                    <Link
+                      to="/kindle-settings"
+                      className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"
+                    >
+                      Kindle
+                    </Link>
+                  </>
                 )}
               </div>
             </div>

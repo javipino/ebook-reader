@@ -24,7 +24,7 @@ export default function LoginPage() {
         : await authApi.register(username, email, password)
       
       // Store token and update auth context
-      login(response.data.token, response.data.username, response.data.userId)
+      login(response.data.token, response.data.username, response.data.email, response.data.userId)
       
       // Redirect to library
       navigate('/library')

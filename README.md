@@ -7,9 +7,9 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 - User authentication with JWT tokens
 - Ebook reading and management (per-user libraries)
 - EPUB upload + parsing into chapters
+- **Amazon Kindle integration** - sync library and reading progress
 - AI-powered character identification (planned)
 - Text-to-speech with character-specific voices (planned)
-- Amazon Kindle integration (planned)
 - Cross-platform support (Web first, mobile later)
 
 ## Tech Stack
@@ -30,6 +30,16 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 - BCrypt.Net-Next 4.0.3 for password hashing
 - Hangfire 1.8.17 for background jobs
 - Serilog 8.0.3 for structured logging
+- Microsoft.Extensions.Http 10.0.1 for HTTP client factory
+
+### Kindle Integration
+- Cookie-based Amazon authentication (user extracts cookies from browser)
+- Encrypted cookie storage (AES encryption)
+- Cookie validation before saving
+- Automatic library sync (daily via Hangfire)
+- Reading progress synchronization
+- Support for multiple Amazon marketplaces (.com, .co.uk, .de, etc.)
+- Note: Cookies expire after a few weeks and need to be refreshed
 
 ### AI Services
 - Azure OpenAI (character analysis)
@@ -111,6 +121,15 @@ The password must match the value configured in `docker-compose.yml`.
 - `GET /api/books/{id}/characters` - Get identified characters (planned)
 - `POST /api/audio/convert` - Convert text to speech (planned)
 
+### Kindle Integration (Authenticated)
+- `GET /api/kindle/status` - Get Kindle account connection status
+- `POST /api/kindle/connect` - Connect using session cookies (email, sessionCookies, marketplace)
+- `POST /api/kindle/validate-cookies` - Validate session cookies before connecting
+- `DELETE /api/kindle/disconnect` - Disconnect Kindle account
+- `POST /api/kindle/sync` - Manually sync Kindle library
+- `POST /api/kindle/sync/progress/{bookId}` - Sync reading progress for specific book
+- `POST /api/kindle/push/progress/{bookId}` - Push local reading progress to Kindle
+
 ## Environment Variables
 
 ### Backend (appsettings.json)
@@ -127,7 +146,10 @@ The password must match the value configured in `docker-compose.yml`.
   },
   "FileStorage": {
     "Type": "Local",
-    "LocalPath": "uploads",
+   ,
+  "Kindle": {
+    "EncryptionKey": "change-this-to-a-secure-32-character-key-in-production"
+  } "LocalPath": "uploads",
     "AzureBlobConnectionString": "",
     "AzureBlobContainerName": "ebooks"
   },

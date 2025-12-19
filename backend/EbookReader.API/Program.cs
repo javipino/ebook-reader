@@ -52,6 +52,10 @@ else
 // Book Service
 builder.Services.AddScoped<IBookService, BookService>();
 
+// Kindle Service
+builder.Services.AddHttpClient(); // Required for KindleService
+builder.Services.AddScoped<IKindleService, KindleService>();
+
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -110,6 +114,9 @@ if (app.Environment.IsDevelopment())
     // Hangfire Dashboard (development only)
     app.UseHangfireDashboard("/hangfire");
 }
+
+// Register Hangfire recurring jobs for Kindle sync
+KindleBackgroundJobs.RegisterRecurringJobs();
 
 app.UseCors("AllowFrontend");
 app.UseSerilogRequestLogging();

@@ -59,10 +59,12 @@ This is an AI-powered ebook reader application that enables users to read books 
 
 ### Database Schema
 - **User**: Authentication entity with Id (GUID), Username (unique), Email (unique), PasswordHash (BCrypt), CreatedAt, LastLoginAt
-- **Book**: Core entity with UserId foreign key, title, author, file path, upload date (user-specific libraries)
+- **Book**: Core entity with UserId foreign key, title, author, file path, cover image, upload date (user-specific libraries)
 - **Character**: Linked to Book, stores character name, description, assigned voice
 - **Chapter**: Book content split into chapters for efficient TTS processing
 - **ReadingProgress**: Tracks user's current position per book (UserId foreign key)
+- **KindleAccount**: Stores encrypted Amazon credentials, sync status, marketplace per user (one account per user)
+- **KindleBook**: Maps Kindle ASINs to Book entities, tracks Kindle reading positions
 
 ### Key Design Decisions
 
@@ -117,6 +119,17 @@ This is an AI-powered ebook reader application that enables users to read books 
    - 401 responses trigger automatic logout
    - All books and reading progress are user-specific
 
+11. **Kindle Integration**: Cookie-based authentication with encrypted storage
+   - Uses browser session cookies extracted by user from Amazon
+   - Cookies encrypted with AES before database storage
+   - Supports multiple Amazon marketplaces (.com, .co.uk, .de, etc.)
+   - Cookie validation before saving to ensure they are valid
+   - Automatic sync via Hangfire background jobs (daily)
+   - Manual sync available from frontend
+   - Two-way reading progress synchronization
+   - **Note**: Book download requires DRM handling (not fully implemented in MVP)
+   - **How it works**: User logs into Amazon in browser, extracts session cookies via DevTools, pastes into the app. Cookies expire after a few weeks and need to be refreshed.
+
 ## Project Structure
 
 ```
@@ -135,16 +148,16 @@ ebook_reader/
 │   └── Dockerfile
 ├── backend/
 │   ├── EbookReader.API/        # Web API controllers
-│   │   ├── Controllers/        # BooksController, AuthController
+│   │   ├── Controllers/        # BooksController, AuthController, KindleController
 │   │   ├── Program.cs          # App configuration & DI, JWT setup
-│   │   └── appsettings.*.json  # Configuration (JWT, FileStorage, Audio)
+│   │   └── appsettings.*.json  # Configuration (JWT, FileStorage, Audio, Kindle)
 │   ├── EbookReader.Core/       # Domain layer
-│   │   ├── Entities/           # User, Book, Character, Chapter, ReadingProgress
-│   │   └── Interfaces/         # IFileStorageService
+│   │   ├── Entities/           # User, Book, Character, Chapter, ReadingProgress, KindleAccount, KindleBook
+│   │   └── Interfaces/         # IFileStorageService, IBookService, IKindleService
 │   ├── EbookReader.Infrastructure/  # Data layer
 │   │   ├── Data/
 │   │   │   └── EbookReaderDbContext.cs
-│   │   └── Services/           # LocalFileStorageService, AzureBlobStorageService
+│   │   └── Services/           # LocalFileStorageService, AzureBlobStorageService, BookService, KindleService, KindleBackgroundJobs
 │   ├── EbookReader.sln
 │   └── Dockerfile
 ├── infrastructure/             # Azure deployment (Bicep)
@@ -200,6 +213,7 @@ AZURE_OPENAI_KEY=your-key
 GOOGLE_CLOUD_PROJECT_ID=your-project-id
 GOOGLE_APPLICATION_CREDENTIALS=path-to-credentials.json
 ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=EbookReader;Username=postgres;Password=postgres
+Kindle__EncryptionKey=your-32-character-encryption-key-here
 ```
 
 **Frontend (.env)**:
@@ -216,6 +230,7 @@ VITE_API_URL=https://localhost:5001
 - Export components as default
 - Use Tailwind utility classes for styling
 - API calls should go through `services/api.ts`
+- **IMPORTANT**: All API endpoints MUST include `/api` prefix (e.g., `/api/books`, `/api/kindle/status`)
 
 ### Backend
 - Follow Clean Architecture principles
@@ -258,6 +273,16 @@ VITE_API_URL=https://localhost:5001
 - `GET /api/books/{bookId}/progress` - Get user's reading position (planned)
 - `PUT /api/books/{bookId}/progress` - Update reading position (planned)
 
+**Kindle Integration** (Require JWT authentication)
+- `GET /api/kindle/status` - Get Kindle account connection status
+- `POST /api/kindle/connect` - Connect Amazon Kindle account
+- `DELETE /api/kindle/disconnect` - Disconnect Kindle account
+- `POST /api/kindle/sync` - Manually sync Kindle library
+- `POST /api/kindle/sync/progress/{bookId}` - Sync reading progress for specific bo
+
+**Note**: All API routes are prefixed with `/api` as configured in the controller route attribute `[Route("api/[controller]")]`ok
+- `POST /api/kindle/push/progress/{bookId}` - Push local reading progress to Kindle
+
 ## Future Features & Roadmap
 
 ### Phase 1: MVP (Current)
@@ -268,8 +293,10 @@ VITE_API_URL=https://localhost:5001
 - [x] Protected routes
 - [x] User-specific data isolation
 - [x] Book upload functionality
-- [ ] Basic reader view
 - [x] Chapter parsing with VersOne.Epub
+- [x] Kindle account connection
+- [x] Kindle library sync (manual and automatic)
+- [ ] Basic reader view
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
@@ -287,9 +314,11 @@ VITE_API_URL=https://localhost:5001
 - [ ] Password reset functionality
 
 ### Phase 4: External Integrations
-- [ ] Amazon Kindle API integration
+- [x] Amazon Kindle API integration (unofficial)
+- [x] Kindle library sync
+- [x] Kindle reading progress sync
+- [ ] Full DRM book download support
 - [ ] Sync reading position across devices
-- [ ] Import books from Kindle library
 
 ### Phase 5: Mobile App
 - [ ] React Native mobile app

@@ -15,6 +15,8 @@ namespace EbookReader.Infrastructure.Data
         public DbSet<Character> Characters { get; set; }
         public DbSet<Chapter> Chapters { get; set; }
         public DbSet<ReadingProgress> ReadingProgresses { get; set; }
+        public DbSet<KindleAccount> KindleAccounts { get; set; }
+        public DbSet<KindleBook> KindleBooks { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -73,6 +75,34 @@ namespace EbookReader.Infrastructure.Data
                     .WithMany(u => u.ReadingProgresses)
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<KindleAccount>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.AmazonEmail).IsRequired().HasMaxLength(500);
+                entity.Property(e => e.EncryptedCredentials).IsRequired();
+                entity.Property(e => e.Marketplace).IsRequired().HasMaxLength(10);
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasIndex(e => e.UserId).IsUnique(); // One Kindle account per user
+            });
+
+            modelBuilder.Entity<KindleBook>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Asin).IsRequired().HasMaxLength(20);
+                entity.HasOne(e => e.Book)
+                    .WithMany()
+                    .HasForeignKey(e => e.BookId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.KindleAccount)
+                    .WithMany()
+                    .HasForeignKey(e => e.KindleAccountId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasIndex(e => new { e.KindleAccountId, e.Asin }).IsUnique();
             });
         }
     }
