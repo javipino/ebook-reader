@@ -11,6 +11,7 @@ interface Book {
   uploadedAt: string;
   charactersAnalyzed: boolean;
   coverImageUrl?: string;
+  readingProgress?: number;
 }
 
 export default function LibraryPage() {
@@ -30,7 +31,24 @@ export default function LibraryPage() {
   const fetchBooks = async () => {
     try {
       const response = await api.get<Book[]>('/api/books');
-      setBooks(response.data);
+      const booksData = response.data;
+      
+      // Fetch reading progress for each book
+      const booksWithProgress = await Promise.all(
+        booksData.map(async (book) => {
+          try {
+            const progressResponse = await api.get(`/api/readingprogress/${book.id}`);
+            const progress = progressResponse.data;
+            // Calculate percentage (simplified - based on chapter number)
+            const percentage = Math.round((progress.currentChapterNumber / 142) * 100); // TODO: use actual chapter count
+            return { ...book, readingProgress: percentage };
+          } catch {
+            return { ...book, readingProgress: 0 };
+          }
+        })
+      );
+      
+      setBooks(booksWithProgress);
     } catch (err: any) {
       console.error('Error fetching books:', err);
       setError('Failed to load books');
@@ -224,9 +242,16 @@ export default function LibraryPage() {
                   <h3 className="text-sm font-bold line-clamp-2 drop-shadow-lg">
                     {book.title}
                   </h3>
-                  <p className="text-xs text-gray-200 mt-1 drop-shadow-lg">
-                    {book.author}
-                  </p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xs text-gray-200 drop-shadow-lg">
+                      {book.author}
+                    </p>
+                    {book.readingProgress !== undefined && book.readingProgress > 0 && (
+                      <span className="text-xs bg-indigo-600 px-2 py-1 rounded-full">
+                        {book.readingProgress}%
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Hover actions */}
