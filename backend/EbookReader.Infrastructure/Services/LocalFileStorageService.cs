@@ -40,13 +40,14 @@ namespace EbookReader.Infrastructure.Services
 
         public async Task<Stream> DownloadFileAsync(string filePath)
         {
-            if (!File.Exists(filePath))
+            var fullPath = Path.Combine(_storagePath, filePath);
+            if (!File.Exists(fullPath))
             {
                 throw new FileNotFoundException($"File not found: {filePath}");
             }
 
             var memoryStream = new MemoryStream();
-            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
             await fileStream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
             
@@ -55,9 +56,10 @@ namespace EbookReader.Infrastructure.Services
 
         public Task DeleteFileAsync(string filePath)
         {
-            if (File.Exists(filePath))
+            var fullPath = Path.Combine(_storagePath, filePath);
+            if (File.Exists(fullPath))
             {
-                File.Delete(filePath);
+                File.Delete(fullPath);
             }
             
             return Task.CompletedTask;
@@ -65,17 +67,19 @@ namespace EbookReader.Infrastructure.Services
 
         public Task<bool> FileExistsAsync(string filePath)
         {
-            return Task.FromResult(File.Exists(filePath));
+            var fullPath = Path.Combine(_storagePath, filePath);
+            return Task.FromResult(File.Exists(fullPath));
         }
 
         public Task<long> GetFileSizeAsync(string filePath)
         {
-            if (!File.Exists(filePath))
+            var fullPath = Path.Combine(_storagePath, filePath);
+            if (!File.Exists(fullPath))
             {
                 throw new FileNotFoundException($"File not found: {filePath}");
             }
 
-            var fileInfo = new FileInfo(filePath);
+            var fileInfo = new FileInfo(fullPath);
             return Task.FromResult(fileInfo.Length);
         }
 

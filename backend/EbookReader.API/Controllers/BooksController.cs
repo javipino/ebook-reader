@@ -39,14 +39,28 @@ namespace EbookReader.API.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<Book>>> GetBooks()
+        public async Task<ActionResult<IEnumerable<object>>> GetBooks()
         {
             var userId = GetCurrentUserId();
-            return await _context.Books
+            var books = await _context.Books
                 .Where(b => b.UserId == userId)
-                .Include(b => b.Characters)
-                .Include(b => b.Chapters)
                 .ToListAsync();
+            
+            // Return simplified book data with cover URL
+            var result = books.Select(b => new
+            {
+                b.Id,
+                b.Title,
+                b.Author,
+                b.Description,
+                b.UploadedAt,
+                b.CharactersAnalyzed,
+                CoverImageUrl = !string.IsNullOrEmpty(b.CoverImagePath) 
+                    ? $"/api/books/{b.Id}/cover" 
+                    : null
+            });
+            
+            return Ok(result);
         }
 
         [HttpGet("{id}")]
@@ -125,6 +139,13 @@ namespace EbookReader.API.Controllers
                 var book = await _bookService.ParseEpubAsync(localFilePath, userId);
                 book.FilePath = filePath; // Update with storage path
 
+                // Extract and save cover image
+                var coverPath = await _bookService.ExtractCoverImageAsync(localFilePath, userId, book.Id);
+                if (coverPath != null)
+                {
+                    book.CoverImagePath = coverPath;
+                }
+
                 // Save to database
                 _context.Books.Add(book);
                 await _context.SaveChangesAsync();
@@ -158,6 +179,12 @@ namespace EbookReader.API.Controllers
                 // Delete the EPUB file from storage
                 await _fileStorageService.DeleteFileAsync(book.FilePath);
 
+                // Delete cover image if exists
+                if (!string.IsNullOrEmpty(book.CoverImagePath))
+                {
+                    await _fileStorageService.DeleteFileAsync(book.CoverImagePath);
+                }
+
                 // Delete audio files if any
                 foreach (var chapter in book.Chapters.Where(c => !string.IsNullOrEmpty(c.AudioFilePath)))
                 {
@@ -175,6 +202,82 @@ namespace EbookReader.API.Controllers
             {
                 _logger.LogError(ex, "Error deleting book {BookId}", id);
                 return StatusCode(500, "An error occurred while deleting the book");
+            }
+        }
+
+        [HttpPost("{id}/extract-cover")]
+        public async Task<IActionResult> ExtractCover(Guid id)
+        {
+            var userId = GetCurrentUserId();
+            var book = await _context.Books
+                .FirstOrDefaultAsync(b => b.UserId == userId && b.Id == id);
+
+            if (book == null)
+            {
+                return NotFound();
+            }
+
+            try
+            {
+                var localFilePath = _fileStorageService.GetFilePath(book.FilePath);
+                var coverPath = await _bookService.ExtractCoverImageAsync(localFilePath, userId, book.Id);
+                
+                if (coverPath == null)
+                {
+                    return NotFound("No cover image found in EPUB file");
+                }
+
+                book.CoverImagePath = coverPath;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Cover extracted for book {BookId}", id);
+                return Ok(new { coverImageUrl = $"/api/books/{book.Id}/cover" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error extracting cover for book {BookId}", id);
+                return StatusCode(500, "Failed to extract cover image");
+            }
+        }
+
+        [HttpGet("{id}/cover")]
+        public async Task<IActionResult> GetBookCover(Guid id)
+        {
+            var userId = GetCurrentUserId();
+            var book = await _context.Books
+                .Where(b => b.UserId == userId && b.Id == id)
+                .FirstOrDefaultAsync();
+
+            if (book == null)
+            {
+                return NotFound();
+            }
+
+            if (string.IsNullOrEmpty(book.CoverImagePath))
+            {
+                return NotFound("Book has no cover image");
+            }
+
+            try
+            {
+                var coverStream = await _fileStorageService.DownloadFileAsync(book.CoverImagePath);
+                var extension = Path.GetExtension(book.CoverImagePath).ToLowerInvariant();
+                
+                var contentType = extension switch
+                {
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".png" => "image/png",
+                    ".gif" => "image/gif",
+                    ".webp" => "image/webp",
+                    _ => "application/octet-stream"
+                };
+
+                return File(coverStream, contentType);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving cover image for book {BookId}", id);
+                return NotFound("Cover image not found");
             }
         }
     }

@@ -10,10 +10,12 @@ namespace EbookReader.Infrastructure.Services
     public class BookService : IBookService
     {
         private readonly ILogger<BookService> _logger;
+        private readonly IFileStorageService _fileStorageService;
 
-        public BookService(ILogger<BookService> logger)
+        public BookService(ILogger<BookService> logger, IFileStorageService fileStorageService)
         {
             _logger = logger;
+            _fileStorageService = fileStorageService;
         }
 
         public async Task<Book> ParseEpubAsync(string filePath, Guid userId)
@@ -180,6 +182,72 @@ namespace EbookReader.Infrastructure.Services
 
             var words = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             return words.Length;
+        }
+
+        public async Task<string?> ExtractCoverImageAsync(string filePath, Guid userId, Guid bookId)
+        {
+            try
+            {
+                _logger.LogInformation("Extracting cover image from EPUB: {FilePath}", filePath);
+                
+                var epubBook = await EpubReader.ReadBookAsync(filePath);
+                
+                // Try to get cover image from metadata
+                byte[]? coverImageBytes = epubBook.CoverImage;
+                
+                if (coverImageBytes == null || coverImageBytes.Length == 0)
+                {
+                    _logger.LogWarning("No cover image found in EPUB file");
+                    return null;
+                }
+
+                // Determine file extension from image data
+                string extension = GetImageExtension(coverImageBytes);
+                string fileName = $"cover{extension}";
+                string coverPath = Path.Combine("covers", userId.ToString(), bookId.ToString(), fileName);
+
+                // Save cover image to storage
+                using (var stream = new MemoryStream(coverImageBytes))
+                {
+                    await _fileStorageService.UploadFileAsync(coverPath, stream);
+                }
+
+                _logger.LogInformation("Cover image saved to: {CoverPath}", coverPath);
+                return coverPath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to extract cover image from EPUB");
+                return null;
+            }
+        }
+
+        private string GetImageExtension(byte[] imageBytes)
+        {
+            // Check PNG signature
+            if (imageBytes.Length >= 8 && 
+                imageBytes[0] == 0x89 && imageBytes[1] == 0x50 && 
+                imageBytes[2] == 0x4E && imageBytes[3] == 0x47)
+                return ".png";
+
+            // Check JPEG signature
+            if (imageBytes.Length >= 2 && 
+                imageBytes[0] == 0xFF && imageBytes[1] == 0xD8)
+                return ".jpg";
+
+            // Check GIF signature
+            if (imageBytes.Length >= 6 && 
+                imageBytes[0] == 0x47 && imageBytes[1] == 0x49 && imageBytes[2] == 0x46)
+                return ".gif";
+
+            // Check WebP signature
+            if (imageBytes.Length >= 12 && 
+                imageBytes[0] == 0x52 && imageBytes[1] == 0x49 && 
+                imageBytes[2] == 0x46 && imageBytes[3] == 0x46)
+                return ".webp";
+
+            // Default to jpg
+            return ".jpg";
         }
     }
 }

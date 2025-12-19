@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import BookCover from '../components/BookCover';
 
 interface Book {
   id: string;
@@ -9,7 +10,7 @@ interface Book {
   description?: string;
   uploadedAt: string;
   charactersAnalyzed: boolean;
-  chapters?: Array<{ id: string; chapterNumber: number; title: string }>;
+  coverImageUrl?: string;
 }
 
 export default function LibraryPage() {
@@ -123,15 +124,6 @@ export default function LibraryPage() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
-    });
-  };
-
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -212,62 +204,53 @@ export default function LibraryPage() {
 
       {/* Book Grid */}
       {books.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {books.map((book) => (
             <div
               key={book.id}
-              className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden"
+              className="group relative rounded-lg shadow-lg hover:shadow-xl transition-all cursor-pointer overflow-hidden aspect-[2/3]"
+              onClick={() => navigate(`/reader/${book.id}`)}
             >
-              <div 
-                onClick={() => navigate(`/reader/${book.id}`)}
-                className="p-6"
+              <BookCover
+                bookId={book.id}
+                coverImageUrl={book.coverImageUrl}
+                className="w-full h-full rounded-lg"
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="text-4xl">📖</div>
-                  {book.chapters && book.chapters.length > 0 && (
-                    <span className="px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded">
-                      {book.chapters.length} chapters
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">
-                  {book.title}
-                </h3>
-                <p className="text-sm text-gray-600 mb-2">{book.author}</p>
-                {book.description && (
-                  <p className="text-sm text-gray-500 mb-4 line-clamp-2">
-                    {book.description}
+                {/* Gradient overlay for text readability */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                
+                {/* Book info overlay */}
+                <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
+                  <h3 className="text-sm font-bold line-clamp-2 drop-shadow-lg">
+                    {book.title}
+                  </h3>
+                  <p className="text-xs text-gray-200 mt-1 drop-shadow-lg">
+                    {book.author}
                   </p>
-                )}
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>Uploaded {formatDate(book.uploadedAt)}</span>
-                  {book.charactersAnalyzed && (
-                    <span className="flex items-center text-green-600">
-                      <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      AI Analyzed
-                    </span>
-                  )}
                 </div>
-              </div>
-              <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex justify-between">
-                <button
-                  onClick={() => navigate(`/reader/${book.id}`)}
-                  className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-                >
-                  Read
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(book.id);
-                  }}
-                  className="text-sm text-red-600 hover:text-red-800 font-medium"
-                >
-                  Delete
-                </button>
-              </div>
+
+                {/* Hover actions */}
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/reader/${book.id}`);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                  >
+                    Read
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(book.id);
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </BookCover>
             </div>
           ))}
         </div>
