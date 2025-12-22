@@ -56,6 +56,9 @@ builder.Services.AddScoped<IBookService, BookService>();
 builder.Services.AddHttpClient(); // Required for KindleService
 builder.Services.AddScoped<IKindleService, KindleService>();
 
+// TTS Service - ElevenLabs
+builder.Services.AddHttpClient<ITtsService, ElevenLabsTtsService>();
+
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)

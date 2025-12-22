@@ -37,14 +37,19 @@ This is an AI-powered ebook reader application that enables users to read books 
 - **Character Analysis**: Azure OpenAI (GPT-4o or GPT-3.5-turbo)
   - Used to identify main characters in books
   - Extract character descriptions for voice assignment
-- **Text-to-Speech**: Google Cloud TTS (primary)
-  - **Free tier**: 1M characters/month for neural voices
-  - **Alternative options** (evaluated but not primary):
-    - OpenAI TTS: $15/1M chars, excellent quality, 6 voices
-    - ElevenLabs: $0.30/1K chars (pay-as-go), best quality, voice cloning
-  - **Hybrid strategy** (future optimization):
-    - Use cheaper TTS (OpenAI/Google) for narration (~70% of content)
-    - Use premium TTS (ElevenLabs) for character dialogue (~30%)
+- **Text-to-Speech**: ElevenLabs (primary - implemented)
+  - **Model**: Eleven v3 (`eleven_v3`)
+  - **Default Voice**: `6bNjXphfWPUDHuFkgDt3`
+  - **Features**: Word-level timestamps for synchronized highlighting
+  - **Pricing**: Pay-per-use, high quality neural voices
+  - **API**: REST with `/v1/text-to-speech/{voice_id}/with-timestamps`
+  - Configure via `ElevenLabs:*` in appsettings.json
+- **Alternative TTS options** (evaluated):
+  - Google Cloud TTS: Free tier 1M chars/month, good quality
+  - OpenAI TTS: $15/1M chars, excellent quality, 6 voices
+- **Hybrid strategy** (future optimization):
+  - Use cheaper TTS for narration (~70% of content)
+  - Use premium TTS (ElevenLabs) for character dialogue (~30%)
 
 ### Infrastructure
 - **Hosting**: Azure (or self-hosted Debian server)
@@ -220,6 +225,8 @@ GOOGLE_CLOUD_PROJECT_ID=your-project-id
 GOOGLE_APPLICATION_CREDENTIALS=path-to-credentials.json
 ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=EbookReader;Username=postgres;Password=postgres
 Kindle__EncryptionKey=your-32-character-encryption-key-here
+ElevenLabs__ApiKey=your-elevenlabs-api-key
+ElevenLabs__DefaultVoiceId=6bNjXphfWPUDHuFkgDt3
 ```
 
 **Frontend (.env)**:
@@ -275,6 +282,11 @@ VITE_API_URL=https://localhost:5001
 - `POST /api/books/{bookId}/chapters/{number}/audio` - Generate chapter audio (planned)
 - `GET /api/books/{bookId}/chapters/{number}/audio` - Stream chapter audio (planned)
 
+**Text-to-Speech (TTS)** (Require JWT authentication)
+- `POST /api/tts/convert` - Convert text to speech with word timings
+- `POST /api/tts/books/{bookId}/chapters/{chapterNumber}/convert` - Convert chapter section to speech
+- `GET /api/tts/voices` - Get available TTS voices
+
 **Reading Progress**
 - `GET /api/books/{bookId}/progress` - Get user's reading position (planned)
 - `PUT /api/books/{bookId}/progress` - Update reading position (planned)
@@ -307,14 +319,16 @@ VITE_API_URL=https://localhost:5001
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
-- [ ] Google Cloud TTS integration
+- [x] ElevenLabs TTS integration (Eleven v3 model)
+- [x] Word-level highlighting during TTS playback
 - [ ] Character voice assignment UI
-- [ ] Audio generation pipeline
-- [ ] Audio player in reader view
+- [x] Audio generation pipeline (on-demand per page)
+- [x] Audio player in reader view with play/pause/stop
+- [x] Playback speed controls (0.5x - 2.0x)
 
 ### Phase 3: Enhanced Features
 - [ ] Reading progress tracking
-- [ ] Playback speed controls
+- [x] Playback speed controls
 - [ ] Bookmarks and highlights
 - [ ] Audio caching strategy
 - [ ] User profile management

@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { Book, Chapter, ReadingProgress } from '../types';
 import { getPageContent, getTotalPages } from '../utils/pagination';
+import { splitIntoChunks } from '../utils/textChunking';
 import { LoadingSpinner } from '../components/ui';
+import { useTts } from '../hooks/useTts';
+import { HighlightedText } from '../components/HighlightedText';
 
 interface BookWithChapters extends Book {
   chapters: Chapter[];
@@ -19,9 +22,32 @@ export default function ReaderPage() {
   const [loading, setLoading] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
+  // TTS Hook
+  const tts = useTts({
+    onChunkComplete: () => {
+      // Optional: Track progress per chunk
+    },
+    onAllComplete: () => {
+      // Auto-advance to next page when all chunks finish
+      handleAutoAdvance();
+    },
+    onError: (error) => {
+      toast.error(error);
+    }
+  });
+
   useEffect(() => {
     fetchBook();
+    // Cleanup TTS when leaving page
+    return () => {
+      tts.stop();
+    };
   }, [bookId]);
+
+  // Update playback speed when slider changes
+  useEffect(() => {
+    tts.setSpeed(playbackSpeed);
+  }, [playbackSpeed]);
 
   const fetchBook = async () => {
     try {
@@ -68,7 +94,7 @@ export default function ReaderPage() {
       await api.put(`/api/readingprogress/${bookId}`, {
         currentChapterNumber: chapter.chapterNumber,
         currentPosition: pageNum,
-        isListening: false
+        isListening: tts.isPlaying
       });
     } catch (err: any) {
       console.error('Error saving progress:', err);
@@ -88,7 +114,57 @@ export default function ReaderPage() {
     return chapter ? getPageContent(chapter.content, currentPage) : '';
   };
 
+  const handleAutoAdvance = useCallback(() => {
+    const totalPages = getTotalPagesInChapter();
+
+    if (currentPage < totalPages - 1) {
+      // Move to next page in same chapter
+      const newPage = currentPage + 1;
+      setCurrentPage(newPage);
+      saveProgress(currentChapterIndex, newPage);
+      window.scrollTo(0, 0);
+      
+      // Auto-start reading next page
+      setTimeout(() => {
+        const nextPageContent = book?.chapters[currentChapterIndex] 
+          ? getPageContent(book.chapters[currentChapterIndex].content, newPage)
+          : '';
+        if (nextPageContent) {
+          const chunks = splitIntoChunks(nextPageContent).map(c => c.text);
+          tts.playChunks(chunks, undefined, playbackSpeed);
+        }
+      }, 500);
+    } else if (book && currentChapterIndex < book.chapters.length - 1) {
+      // Move to next chapter
+      const nextChapterIdx = currentChapterIndex + 1;
+      setCurrentChapterIndex(nextChapterIdx);
+      setCurrentPage(0);
+      saveProgress(nextChapterIdx, 0);
+      window.scrollTo(0, 0);
+      toast.success('Next chapter');
+      
+      // Auto-start reading next chapter
+      setTimeout(() => {
+        const nextChapterContent = book?.chapters[nextChapterIdx]
+          ? getPageContent(book.chapters[nextChapterIdx].content, 0)
+          : '';
+        if (nextChapterContent) {
+          const chunks = splitIntoChunks(nextChapterContent).map(c => c.text);
+          tts.playChunks(chunks, undefined, playbackSpeed);
+        }
+      }, 500);
+    } else {
+      // Finished book
+      toast.success('Finished reading!');
+    }
+  }, [book, currentChapterIndex, currentPage, getTotalPagesInChapter, saveProgress, tts, playbackSpeed]);
+
   const handlePreviousPage = () => {
+    // Stop TTS when navigating
+    if (tts.isPlaying) {
+      tts.stop();
+    }
+
     if (currentPage > 0) {
       const newPage = currentPage - 1;
       setCurrentPage(newPage);
@@ -106,6 +182,11 @@ export default function ReaderPage() {
   };
 
   const handleNextPage = () => {
+    // Stop TTS when navigating
+    if (tts.isPlaying) {
+      tts.stop();
+    }
+
     const totalPages = getTotalPagesInChapter();
 
     if (currentPage < totalPages - 1) {
@@ -123,8 +204,47 @@ export default function ReaderPage() {
   };
 
   const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPlaybackSpeed(parseFloat(e.target.value));
+    const newSpeed = parseFloat(e.target.value);
+    setPlaybackSpeed(newSpeed);
   };
+
+  const handleListenClick = useCallback(async () => {
+    if (tts.isPlaying) {
+      tts.pause();
+    } else if (tts.isLoading) {
+      // Do nothing while loading
+      return;
+    } else if (tts.wordTimings.length > 0 && !tts.isPlaying) {
+      // Resume if we have existing audio
+      tts.resume();
+    } else {
+      // Start new playback with chunks
+      const pageContent = getCurrentPageContent();
+      if (!pageContent) {
+        toast.error('No content to read');
+        return;
+      }
+
+      try {
+        // Split into smaller chunks (paragraphs) to reduce token usage
+        const chunks = splitIntoChunks(pageContent).map(chunk => chunk.text);
+        
+        if (chunks.length === 0) {
+          toast.error('No readable content found');
+          return;
+        }
+
+        toast.success(`Reading ${chunks.length} section${chunks.length > 1 ? 's' : ''}...`);
+        await tts.playChunks(chunks, undefined, playbackSpeed);
+      } catch (error) {
+        // Error already handled by onError callback
+      }
+    }
+  }, [tts, playbackSpeed, getCurrentPageContent]);
+
+  const handleStopClick = useCallback(() => {
+    tts.stop();
+  }, [tts]);
 
   const canGoPrevious = currentChapterIndex > 0 || currentPage > 0;
   const canGoNext = book
@@ -178,11 +298,21 @@ export default function ReaderPage() {
           />
 
           <div className="relative z-0">
-            <div
-              className="text-gray-800 text-lg"
-              style={{ lineHeight: '1.6' }}
-              dangerouslySetInnerHTML={{ __html: pageContent }}
-            />
+            {tts.wordTimings.length > 0 ? (
+              <HighlightedText
+                content={pageContent}
+                wordTimings={tts.wordTimings}
+                currentWordIndex={tts.currentWordIndex}
+                isPlaying={tts.isPlaying}
+                className="text-gray-800 text-lg"
+              />
+            ) : (
+              <div
+                className="text-gray-800 text-lg"
+                style={{ lineHeight: '1.6' }}
+                dangerouslySetInnerHTML={{ __html: pageContent }}
+              />
+            )}
           </div>
         </div>
 
@@ -231,9 +361,37 @@ export default function ReaderPage() {
           </div>
 
           <div className="pt-6 border-t border-gray-200 flex items-center space-x-4">
-            <button className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
-              ▶️ Listen
+            <button 
+              onClick={handleListenClick}
+              disabled={tts.isLoading}
+              className={`px-6 py-3 rounded-lg transition-colors flex items-center gap-2 ${
+                tts.isLoading 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : tts.isPlaying 
+                    ? 'bg-yellow-500 hover:bg-yellow-600 text-white' 
+                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+            >
+              {tts.isLoading ? (
+                <>
+                  <span className="animate-spin">⏳</span> Loading...
+                </>
+              ) : tts.isPlaying ? (
+                <>⏸️ Pause</>
+              ) : (
+                <>▶️ Listen</>
+              )}
             </button>
+            
+            {(tts.isPlaying || tts.wordTimings.length > 0) && (
+              <button 
+                onClick={handleStopClick}
+                className="px-6 py-3 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+              >
+                ⏹️ Stop
+              </button>
+            )}
+
             <div className="flex items-center space-x-2">
               <label className="text-sm text-gray-600">Speed:</label>
               <input
@@ -247,6 +405,17 @@ export default function ReaderPage() {
               />
               <span className="text-gray-600 font-medium w-12">{playbackSpeed.toFixed(1)}x</span>
             </div>
+
+            {tts.isPlaying && tts.currentWord && (
+              <div className="text-sm text-gray-500 italic flex items-center gap-2">
+                <span>Reading: "{tts.currentWord}"</span>
+                {tts.totalChunks > 1 && (
+                  <span className="text-xs bg-gray-100 px-2 py-1 rounded">
+                    Section {tts.currentChunkIndex + 1}/{tts.totalChunks}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

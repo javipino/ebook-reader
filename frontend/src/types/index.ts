@@ -40,3 +40,27 @@ export interface Character {
   description?: string;
   voiceId?: string;
 }
+
+// TTS Types
+export interface WordTiming {
+  word: string;
+  startTime: number;
+  endTime: number;
+}
+
+export interface TtsResponse {
+  audioBase64: string;
+  contentType: string;
+  wordTimings: WordTiming[];
+}
+
+export interface TtsRequest {
+  text: string;
+  voiceId?: string;
+  speed?: number;
+}
+
+export interface Voice {
+  id: string;
+  name: string;
+}
