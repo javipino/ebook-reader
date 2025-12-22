@@ -4,10 +4,10 @@ import toast from 'react-hot-toast';
 import api from '../services/api';
 import { Book, Chapter, ReadingProgress } from '../types';
 import { getPageContent, getTotalPages } from '../utils/pagination';
-import { splitIntoChunks } from '../utils/textChunking';
 import { LoadingSpinner } from '../components/ui';
-import { useTts } from '../hooks/useTts';
-import { HighlightedText } from '../components/HighlightedText';
+import { useStreamingTts } from '../hooks/useStreamingTts';
+import { AudioPlayer } from '../components/AudioPlayer';
+import { ClickableText } from '../components/ClickableText';
 
 interface BookWithChapters extends Book {
   chapters: Chapter[];
@@ -20,15 +20,10 @@ export default function ReaderPage() {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-
-  // TTS Hook
-  const tts = useTts({
-    onChunkComplete: () => {
-      // Optional: Track progress per chunk
-    },
-    onAllComplete: () => {
-      // Auto-advance to next page when all chunks finish
+  // TTS Hook - WebSocket streaming
+  const tts = useStreamingTts({
+    onComplete: () => {
+      // Auto-advance to next page when audio finishes
       handleAutoAdvance();
     },
     onError: (error) => {
@@ -43,11 +38,6 @@ export default function ReaderPage() {
       tts.stop();
     };
   }, [bookId]);
-
-  // Update playback speed when slider changes
-  useEffect(() => {
-    tts.setSpeed(playbackSpeed);
-  }, [playbackSpeed]);
 
   const fetchBook = async () => {
     try {
@@ -130,8 +120,13 @@ export default function ReaderPage() {
           ? getPageContent(book.chapters[currentChapterIndex].content, newPage)
           : '';
         if (nextPageContent) {
-          const chunks = splitIntoChunks(nextPageContent).map(c => c.text);
-          tts.playChunks(chunks, undefined, playbackSpeed);
+          // Strip HTML for TTS
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = nextPageContent;
+          const plainText = tempDiv.textContent || tempDiv.innerText || '';
+          if (plainText.trim()) {
+            tts.play(plainText.trim());
+          }
         }
       }, 500);
     } else if (book && currentChapterIndex < book.chapters.length - 1) {
@@ -149,15 +144,20 @@ export default function ReaderPage() {
           ? getPageContent(book.chapters[nextChapterIdx].content, 0)
           : '';
         if (nextChapterContent) {
-          const chunks = splitIntoChunks(nextChapterContent).map(c => c.text);
-          tts.playChunks(chunks, undefined, playbackSpeed);
+          // Strip HTML for TTS
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = nextChapterContent;
+          const plainText = tempDiv.textContent || tempDiv.innerText || '';
+          if (plainText.trim()) {
+            tts.play(plainText.trim());
+          }
         }
       }, 500);
     } else {
       // Finished book
       toast.success('Finished reading!');
     }
-  }, [book, currentChapterIndex, currentPage, getTotalPagesInChapter, saveProgress, tts, playbackSpeed]);
+  }, [book, currentChapterIndex, currentPage, getTotalPagesInChapter, saveProgress, tts]);
 
   const handlePreviousPage = () => {
     // Stop TTS when navigating
@@ -203,46 +203,35 @@ export default function ReaderPage() {
     }
   };
 
-  const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newSpeed = parseFloat(e.target.value);
-    setPlaybackSpeed(newSpeed);
-  };
-
-  const handleListenClick = useCallback(async () => {
+  const handlePlayPause = useCallback(async () => {
     if (tts.isPlaying) {
       tts.pause();
     } else if (tts.isLoading) {
-      // Do nothing while loading
       return;
-    } else if (tts.wordTimings.length > 0 && !tts.isPlaying) {
-      // Resume if we have existing audio
+    } else if (tts.isPaused) {
       tts.resume();
     } else {
-      // Start new playback with chunks
       const pageContent = getCurrentPageContent();
       if (!pageContent) {
         toast.error('No content to read');
         return;
       }
 
-      try {
-        // Split into smaller chunks (paragraphs) to reduce token usage
-        const chunks = splitIntoChunks(pageContent).map(chunk => chunk.text);
-        
-        if (chunks.length === 0) {
-          toast.error('No readable content found');
-          return;
-        }
-
-        toast.success(`Reading ${chunks.length} section${chunks.length > 1 ? 's' : ''}...`);
-        await tts.playChunks(chunks, undefined, playbackSpeed);
-      } catch (error) {
-        // Error already handled by onError callback
+      // Strip HTML and get plain text for TTS
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = pageContent;
+      const plainText = tempDiv.textContent || tempDiv.innerText || '';
+      
+      if (!plainText.trim()) {
+        toast.error('No readable content found');
+        return;
       }
-    }
-  }, [tts, playbackSpeed, getCurrentPageContent]);
 
-  const handleStopClick = useCallback(() => {
+      await tts.play(plainText.trim());
+    }
+  }, [tts, getCurrentPageContent]);
+
+  const handleStop = useCallback(() => {
     tts.stop();
   }, [tts]);
 
@@ -298,43 +287,41 @@ export default function ReaderPage() {
           />
 
           <div className="relative z-0">
-            {tts.wordTimings.length > 0 ? (
-              <HighlightedText
-                content={pageContent}
-                wordTimings={tts.wordTimings}
-                currentWordIndex={tts.currentWordIndex}
-                isPlaying={tts.isPlaying}
-                className="text-gray-800 text-lg"
-              />
-            ) : (
-              <div
-                className="text-gray-800 text-lg"
-                style={{ lineHeight: '1.6' }}
-                dangerouslySetInnerHTML={{ __html: pageContent }}
-              />
-            )}
+            <ClickableText
+              content={pageContent}
+              isPlaying={tts.isPlaying || tts.isPaused}
+              onWordClick={(wordIndex, totalWords) => {
+                const position = wordIndex / totalWords;
+                tts.seekToPosition(position);
+              }}
+              className="text-gray-800 text-lg"
+            />
           </div>
         </div>
 
         <div className="border-t border-gray-200 pt-4">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={handlePreviousPage}
-              disabled={!canGoPrevious}
-              className="px-6 py-3 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              ← Previous
-            </button>
-            <button
-              onClick={handleNextPage}
-              disabled={!canGoNext}
-              className="px-6 py-3 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              Next →
-            </button>
+          {/* Audio Player - replaces old previous/next buttons */}
+          <div className="mb-6">
+            <AudioPlayer
+              isPlaying={tts.isPlaying}
+              isPaused={tts.isPaused}
+              isLoading={tts.isLoading}
+              currentTime={tts.currentTime}
+              duration={tts.duration}
+              speed={tts.speed}
+              canGoPrevious={canGoPrevious}
+              canGoNext={canGoNext}
+              onPlayPause={handlePlayPause}
+              onStop={handleStop}
+              onSeekForward={() => tts.seekForward(10)}
+              onSeekBackward={() => tts.seekBackward(10)}
+              onSpeedChange={tts.setSpeed}
+              onPreviousPage={handlePreviousPage}
+              onNextPage={handleNextPage}
+            />
           </div>
 
-          <div className="flex items-end justify-between mb-6">
+          <div className="flex items-end justify-between">
             <div className="text-sm text-gray-600">
               <p className="font-medium">
                 Chapter {currentChapterIndex + 1} of {book.chapters.length}
@@ -360,63 +347,6 @@ export default function ReaderPage() {
             </div>
           </div>
 
-          <div className="pt-6 border-t border-gray-200 flex items-center space-x-4">
-            <button 
-              onClick={handleListenClick}
-              disabled={tts.isLoading}
-              className={`px-6 py-3 rounded-lg transition-colors flex items-center gap-2 ${
-                tts.isLoading 
-                  ? 'bg-gray-400 cursor-not-allowed' 
-                  : tts.isPlaying 
-                    ? 'bg-yellow-500 hover:bg-yellow-600 text-white' 
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-              }`}
-            >
-              {tts.isLoading ? (
-                <>
-                  <span className="animate-spin">⏳</span> Loading...
-                </>
-              ) : tts.isPlaying ? (
-                <>⏸️ Pause</>
-              ) : (
-                <>▶️ Listen</>
-              )}
-            </button>
-            
-            {(tts.isPlaying || tts.wordTimings.length > 0) && (
-              <button 
-                onClick={handleStopClick}
-                className="px-6 py-3 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
-              >
-                ⏹️ Stop
-              </button>
-            )}
-
-            <div className="flex items-center space-x-2">
-              <label className="text-sm text-gray-600">Speed:</label>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={playbackSpeed}
-                onChange={handleSpeedChange}
-                className="w-32"
-              />
-              <span className="text-gray-600 font-medium w-12">{playbackSpeed.toFixed(1)}x</span>
-            </div>
-
-            {tts.isPlaying && tts.currentWord && (
-              <div className="text-sm text-gray-500 italic flex items-center gap-2">
-                <span>Reading: "{tts.currentWord}"</span>
-                {tts.totalChunks > 1 && (
-                  <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                    Section {tts.currentChunkIndex + 1}/{tts.totalChunks}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

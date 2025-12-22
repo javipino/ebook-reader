@@ -38,11 +38,11 @@ This is an AI-powered ebook reader application that enables users to read books 
   - Used to identify main characters in books
   - Extract character descriptions for voice assignment
 - **Text-to-Speech**: ElevenLabs (primary - implemented)
-  - **Model**: Eleven v3 (`eleven_v3`)
+  - **Model**: Eleven Flash v2.5 (`eleven_flash_v2_5`) - cheapest/fastest model
   - **Default Voice**: `6bNjXphfWPUDHuFkgDt3`
-  - **Features**: Word-level timestamps for synchronized highlighting
-  - **Pricing**: Pay-per-use, high quality neural voices
-  - **API**: REST with `/v1/text-to-speech/{voice_id}/with-timestamps`
+  - **Features**: WebSocket streaming for smooth continuous playback
+  - **Pricing**: Pay-per-use, neural voices
+  - **API**: WebSocket streaming via backend proxy at `/api/ttsstream/stream`
   - Configure via `ElevenLabs:*` in appsettings.json
 - **Alternative TTS options** (evaluated):
   - Google Cloud TTS: Free tier 1M chars/month, good quality
@@ -283,8 +283,8 @@ VITE_API_URL=https://localhost:5001
 - `GET /api/books/{bookId}/chapters/{number}/audio` - Stream chapter audio (planned)
 
 **Text-to-Speech (TTS)** (Require JWT authentication)
-- `POST /api/tts/convert` - Convert text to speech with word timings
-- `POST /api/tts/books/{bookId}/chapters/{chapterNumber}/convert` - Convert chapter section to speech
+- `WS /api/ttsstream/stream` - WebSocket endpoint for streaming TTS audio
+- `POST /api/tts/convert` - Convert text to speech (legacy REST endpoint)
 - `GET /api/tts/voices` - Get available TTS voices
 
 **Reading Progress**
@@ -319,12 +319,13 @@ VITE_API_URL=https://localhost:5001
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
-- [x] ElevenLabs TTS integration (Eleven v3 model)
-- [x] Word-level highlighting during TTS playback
+- [x] ElevenLabs TTS integration (Eleven Flash v2.5 model - cheapest)
+- [ ] Word-level highlighting during TTS playback (removed for WebSocket streaming)
 - [ ] Character voice assignment UI
 - [x] Audio generation pipeline (on-demand per page)
 - [x] Audio player in reader view with play/pause/stop
 - [x] Playback speed controls (0.5x - 2.0x)
+- [x] WebSocket streaming for smooth continuous audio playback
 
 ### Phase 3: Enhanced Features
 - [ ] Reading progress tracking

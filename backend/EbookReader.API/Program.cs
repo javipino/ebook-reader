@@ -58,6 +58,7 @@ builder.Services.AddScoped<IKindleService, KindleService>();
 
 // TTS Service - ElevenLabs
 builder.Services.AddHttpClient<ITtsService, ElevenLabsTtsService>();
+builder.Services.AddSingleton<ElevenLabsStreamingService>();
 
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration
@@ -121,6 +122,12 @@ if (app.Environment.IsDevelopment())
 
 // Register Hangfire recurring jobs for Kindle sync
 KindleBackgroundJobs.RegisterRecurringJobs();
+
+// Enable WebSockets for TTS streaming
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
 
 app.UseCors("AllowFrontend");
 app.UseSerilogRequestLogging();
