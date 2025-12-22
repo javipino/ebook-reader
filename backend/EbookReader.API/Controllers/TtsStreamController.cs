@@ -26,6 +26,7 @@ public class TtsStreamController : ControllerBase
     /// WebSocket endpoint for streaming TTS audio.
     /// Connect via WebSocket, send JSON with { text: "...", voiceId?: "..." }
     /// Receive binary audio chunks and text alignment data.
+    /// Supports multiple text chunks on the same connection.
     /// </summary>
     [HttpGet("stream")]
     public async Task StreamTts()
@@ -42,32 +43,47 @@ public class TtsStreamController : ControllerBase
 
         try
         {
-            // Wait for initial message with text
             var buffer = new byte[1024 * 64]; // 64KB buffer for large text
-            var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
-            if (result.MessageType == WebSocketMessageType.Text)
+            // Loop to handle multiple text chunks
+            while (webSocket.State == WebSocketState.Open)
             {
-                var requestJson = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                var request = JsonSerializer.Deserialize<TtsStreamRequest>(requestJson, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
+                var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
-                if (request?.Text == null || string.IsNullOrWhiteSpace(request.Text))
+                if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    await SendErrorAndClose(webSocket, "Text is required");
-                    return;
+                    _logger.LogDebug("Client requested close");
+                    break;
                 }
 
-                _logger.LogInformation("Starting TTS stream for {Length} characters", request.Text.Length);
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var requestJson = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    var request = JsonSerializer.Deserialize<TtsStreamRequest>(requestJson, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
 
-                // Stream the audio
-                await _streamingService.StreamTextToSpeechAsync(
-                    request.Text,
-                    webSocket,
-                    request.VoiceId,
-                    CancellationToken.None);
+                    if (request?.Text == null || string.IsNullOrWhiteSpace(request.Text))
+                    {
+                        // Send error but don't close - allow retry
+                        var errorJson = JsonSerializer.Serialize(new { type = "error", message = "Text is required" });
+                        var errorBytes = Encoding.UTF8.GetBytes(errorJson);
+                        await webSocket.SendAsync(new ArraySegment<byte>(errorBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                        continue;
+                    }
+
+                    _logger.LogInformation("Starting TTS stream for {Length} characters", request.Text.Length);
+
+                    // Stream the audio for this chunk
+                    await _streamingService.StreamTextToSpeechAsync(
+                        request.Text,
+                        webSocket,
+                        request.VoiceId,
+                        CancellationToken.None);
+                    
+                    // After streaming completes, continue listening for more chunks
+                }
             }
 
             // Close gracefully

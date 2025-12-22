@@ -26,7 +26,7 @@ export default function ReaderPage() {
       // Auto-advance to next page when audio finishes
       handleAutoAdvance();
     },
-    onError: (error) => {
+    onError: (error: string) => {
       toast.error(error);
     }
   });
@@ -270,28 +270,33 @@ export default function ReaderPage() {
         </div>
 
         <div className="relative mb-8" style={{ minHeight: '65vh' }}>
-          <div
-            onClick={handlePreviousPage}
-            className={`absolute left-0 top-0 bottom-0 w-1/3 cursor-pointer hover:bg-gray-50 hover:bg-opacity-50 transition-colors z-10 ${
-              !canGoPrevious ? 'cursor-not-allowed opacity-0' : ''
-            }`}
-            style={{ pointerEvents: canGoPrevious ? 'auto' : 'none' }}
-          />
+          {/* Page navigation overlays - hidden when TTS is active */}
+          {!tts.isPlaying && !tts.isPaused && (
+            <>
+              <div
+                onClick={handlePreviousPage}
+                className={`absolute left-0 top-0 bottom-0 w-1/3 cursor-pointer hover:bg-gray-50 hover:bg-opacity-50 transition-colors z-10 ${
+                  !canGoPrevious ? 'cursor-not-allowed opacity-0' : ''
+                }`}
+                style={{ pointerEvents: canGoPrevious ? 'auto' : 'none' }}
+              />
 
-          <div
-            onClick={handleNextPage}
-            className={`absolute right-0 top-0 bottom-0 w-2/3 cursor-pointer hover:bg-gray-50 hover:bg-opacity-50 transition-colors z-10 ${
-              !canGoNext ? 'cursor-not-allowed opacity-0' : ''
-            }`}
-            style={{ pointerEvents: canGoNext ? 'auto' : 'none' }}
-          />
+              <div
+                onClick={handleNextPage}
+                className={`absolute right-0 top-0 bottom-0 w-2/3 cursor-pointer hover:bg-gray-50 hover:bg-opacity-50 transition-colors z-10 ${
+                  !canGoNext ? 'cursor-not-allowed opacity-0' : ''
+                }`}
+                style={{ pointerEvents: canGoNext ? 'auto' : 'none' }}
+              />
+            </>
+          )}
 
           <div className="relative z-0">
             <ClickableText
               content={pageContent}
-              isPlaying={tts.isPlaying || tts.isPaused}
-              onWordClick={(wordIndex, totalWords) => {
-                const position = wordIndex / totalWords;
+              isActive={tts.isPlaying || tts.isPaused}
+              currentWordIndex={tts.currentWordIndex}
+              onWordClick={(position: number) => {
                 tts.seekToPosition(position);
               }}
               className="text-gray-800 text-lg"
@@ -306,8 +311,6 @@ export default function ReaderPage() {
               isPlaying={tts.isPlaying}
               isPaused={tts.isPaused}
               isLoading={tts.isLoading}
-              currentTime={tts.currentTime}
-              duration={tts.duration}
               speed={tts.speed}
               canGoPrevious={canGoPrevious}
               canGoNext={canGoNext}
