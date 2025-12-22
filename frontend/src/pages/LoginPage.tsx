@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { toast } from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { authApi } from '../services/api'
 
@@ -8,14 +9,12 @@ export default function LoginPage() {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { login } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError('')
     setLoading(true)
 
     try {
@@ -26,10 +25,13 @@ export default function LoginPage() {
       // Store token and update auth context
       login(response.data.token, response.data.username, response.data.email, response.data.userId)
       
+      // Show success message
+      toast.success(isLogin ? 'Welcome back!' : 'Account created successfully')
+      
       // Redirect to library
       navigate('/library')
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Authentication failed')
+      toast.error(err.response?.data?.message || 'Authentication failed')
     } finally {
       setLoading(false)
     }
@@ -102,12 +104,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {error && (
-              <div className="rounded-md bg-red-50 p-4">
-                <p className="text-sm text-red-800">{error}</p>
-              </div>
-            )}
-
             <div>
               <button
                 type="submit"
@@ -134,10 +130,7 @@ export default function LoginPage() {
             <div className="mt-6">
               <button
                 type="button"
-                onClick={() => {
-                  setIsLogin(!isLogin)
-                  setError('')
-                }}
+                onClick={() => setIsLogin(!isLogin)}
                 className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 {isLogin ? 'Create account' : 'Sign in instead'}

@@ -37,7 +37,7 @@ namespace EbookReader.Infrastructure.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Title).IsRequired().HasMaxLength(500);
                 entity.Property(e => e.Author).IsRequired().HasMaxLength(200);
-                entity.Property(e => e.FilePath).IsRequired();
+                entity.Property(e => e.FilePath).IsRequired(false); // Nullable for Kindle books without downloaded file
                 entity.HasOne(e => e.User)
                     .WithMany(u => u.Books)
                     .HasForeignKey(e => e.UserId)
@@ -93,7 +93,7 @@ namespace EbookReader.Infrastructure.Data
             modelBuilder.Entity<KindleBook>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.Property(e => e.Asin).IsRequired().HasMaxLength(20);
+                entity.Property(e => e.Asin).IsRequired().HasMaxLength(50);
                 entity.HasOne(e => e.Book)
                     .WithMany()
                     .HasForeignKey(e => e.BookId)

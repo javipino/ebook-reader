@@ -5,7 +5,7 @@ import kindleService from '../services/kindleService';
 import { toast } from 'react-hot-toast';
 import { Book } from '../types';
 import BookCover from '../components/BookCover';
-import { LoadingSpinner, ErrorAlert } from '../components/ui';
+import { LoadingSpinner } from '../components/ui';
 
 interface BookWithProgress extends Book {
   readingProgress?: number;
@@ -17,21 +17,32 @@ export default function LibraryPage() {
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [kindleConnected, setKindleConnected] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalBooks, setTotalBooks] = useState(0);
+  const pageSize = 20;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchBooks();
     checkKindleStatus();
-  }, []);
+  }, [currentPage]);
 
   const fetchBooks = async () => {
     try {
-      const response = await api.get<Book[]>('/api/books');
+      setLoading(true);
+      const response = await api.get<Book[]>(`/api/books?page=${currentPage}&pageSize=${pageSize}`);
       const booksData = response.data;
+      
+      // Extract pagination info from headers
+      const totalCount = parseInt(response.headers['x-total-count'] || '0');
+      const totalPagesCount = parseInt(response.headers['x-total-pages'] || '1');
+      
+      setTotalBooks(totalCount);
+      setTotalPages(totalPagesCount);
 
       const booksWithProgress = await Promise.all(
         booksData.map(async (book: Book) => {
@@ -47,9 +58,9 @@ export default function LibraryPage() {
       );
 
       setBooks(booksWithProgress);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching books:', err);
-      setError('Failed to load books');
+      toast.error(err.response?.data?.message || 'Failed to load books');
     } finally {
       setLoading(false);
     }
@@ -88,16 +99,15 @@ export default function LibraryPage() {
 
   const handleFileSelect = async (file: File) => {
     if (!file.name.endsWith('.epub')) {
-      setError('Only EPUB files are supported');
+      toast.error('Only EPUB files are supported');
       return;
     }
 
     if (file.size > 50 * 1024 * 1024) {
-      setError('File size must be less than 50MB');
+      toast.error('File size must be less than 50MB');
       return;
     }
 
-    setError(null);
     setUploading(true);
     setUploadProgress(0);
 
@@ -122,7 +132,7 @@ export default function LibraryPage() {
       navigate(`/reader/${response.data.id}`);
     } catch (err: any) {
       console.error('Error uploading book:', err);
-      setError(err.response?.data || 'Failed to upload book');
+      toast.error(err.response?.data || 'Failed to upload book');
     } finally {
       setUploading(false);
     }
@@ -162,9 +172,10 @@ export default function LibraryPage() {
     try {
       await api.delete(`/api/books/${bookId}`);
       setBooks(books.filter(b => b.id !== bookId));
-    } catch (err) {
+      toast.success('Book deleted successfully');
+    } catch (err: any) {
       console.error('Error deleting book:', err);
-      setError('Failed to delete book');
+      toast.error(err.response?.data?.message || 'Failed to delete book');
     }
   };
 
@@ -234,12 +245,6 @@ export default function LibraryPage() {
         onChange={handleFileInput}
         className="hidden"
       />
-
-      {error && (
-        <div className="mb-4">
-          <ErrorAlert message={error} onDismiss={() => setError(null)} />
-        </div>
-      )}
 
       {books.length === 0 && !uploading && (
         <div
@@ -317,6 +322,74 @@ export default function LibraryPage() {
               </BookCover>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex items-center justify-between border-t border-gray-200 pt-6">
+          <div className="text-sm text-gray-700">
+            Showing <span className="font-medium">{(currentPage - 1) * pageSize + 1}</span> to{' '}
+            <span className="font-medium">{Math.min(currentPage * pageSize, totalBooks)}</span> of{' '}
+            <span className="font-medium">{totalBooks}</span> books
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setCurrentPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <div className="flex items-center gap-2">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = currentPage - 2 + i;
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-2 text-sm font-medium rounded-md ${
+                      currentPage === pageNum
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setCurrentPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Last
+            </button>
+          </div>
         </div>
       )}
     </div>

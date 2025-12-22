@@ -3,6 +3,7 @@ using System;
 using EbookReader.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EbookReader.Infrastructure.Migrations
 {
     [DbContext(typeof(EbookReaderDbContext))]
-    partial class EbookReaderDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251222081204_MakeFilePathNullable")]
+    partial class MakeFilePathNullable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -47,6 +50,7 @@ namespace EbookReader.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("FilePath")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("Title")
@@ -192,8 +196,8 @@ namespace EbookReader.Infrastructure.Migrations
 
                     b.Property<string>("Asin")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.Property<Guid>("BookId")
                         .HasColumnType("uuid");

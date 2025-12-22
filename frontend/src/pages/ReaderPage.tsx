@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import api from '../services/api';
 import { Book, Chapter, ReadingProgress } from '../types';
 import { getPageContent, getTotalPages } from '../utils/pagination';
@@ -11,11 +12,11 @@ interface BookWithChapters extends Book {
 
 export default function ReaderPage() {
   const { bookId } = useParams();
+  const navigate = useNavigate();
   const [book, setBook] = useState<BookWithChapters | null>(null);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   useEffect(() => {
@@ -25,6 +26,14 @@ export default function ReaderPage() {
   const fetchBook = async () => {
     try {
       const response = await api.get<BookWithChapters>(`/api/books/${bookId}`);
+      
+      // Check if book has no file (Kindle book without download)
+      if (!response.data.chapters || response.data.chapters.length === 0) {
+        toast.error('This book file is not available yet. Kindle book download is not implemented.');
+        navigate('/library');
+        return;
+      }
+      
       const sortedBook: BookWithChapters = {
         ...response.data,
         chapters: response.data.chapters.sort((a: Chapter, b: Chapter) => a.chapterNumber - b.chapterNumber)
@@ -42,9 +51,10 @@ export default function ReaderPage() {
         setCurrentChapterIndex(chapterIdx);
         setCurrentPage(progress.currentPosition);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching book:', err);
-      setError('Failed to load book');
+      toast.error(err.response?.data?.message || 'Failed to load book');
+      navigate('/library');
     } finally {
       setLoading(false);
     }
@@ -60,8 +70,9 @@ export default function ReaderPage() {
         currentPosition: pageNum,
         isListening: false
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving progress:', err);
+      toast.error('Failed to save reading progress');
     }
   };
 
@@ -128,11 +139,11 @@ export default function ReaderPage() {
     );
   }
 
-  if (error || !book) {
+  if (!book) {
     return (
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-8 text-center">
-          <p className="text-red-800">{error || 'Book not found'}</p>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
+          <p className="text-yellow-800">Loading book...</p>
         </div>
       </div>
     );

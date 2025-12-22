@@ -99,7 +99,8 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins("http://localhost:5173", "http://localhost:5174", "https://localhost:5173", "https://localhost:5174")
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .WithExposedHeaders("X-Total-Count", "X-Page", "X-Page-Size", "X-Total-Pages"); // Expose pagination headers
     });
 });
 

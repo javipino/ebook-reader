@@ -6,7 +6,7 @@ namespace EbookReader.Core.Entities
         public string Title { get; set; } = string.Empty;
         public string Author { get; set; } = string.Empty;
         public string? Description { get; set; }
-        public string FilePath { get; set; } = string.Empty;
+        public string? FilePath { get; set; } // Nullable for Kindle books without downloaded file
         public string? CoverImagePath { get; set; }
         public string FileFormat { get; set; } = string.Empty;
         public DateTime UploadedAt { get; set; }

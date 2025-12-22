@@ -39,11 +39,26 @@ namespace EbookReader.API.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<object>>> GetBooks()
+        public async Task<ActionResult<IEnumerable<object>>> GetBooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             var userId = GetCurrentUserId();
+            
+            // Validate pagination parameters
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 20;
+            if (pageSize > 100) pageSize = 100; // Max 100 items per page
+            
+            var skip = (page - 1) * pageSize;
+            
+            var totalBooks = await _context.Books
+                .Where(b => b.UserId == userId)
+                .CountAsync();
+            
             var books = await _context.Books
                 .Where(b => b.UserId == userId)
+                .OrderByDescending(b => b.UploadedAt)
+                .Skip(skip)
+                .Take(pageSize)
                 .ToListAsync();
             
             // Return simplified book data with cover URL
@@ -59,6 +74,12 @@ namespace EbookReader.API.Controllers
                     ? $"/api/books/{b.Id}/cover" 
                     : null
             });
+            
+            // Add pagination headers
+            Response.Headers.Append("X-Total-Count", totalBooks.ToString());
+            Response.Headers.Append("X-Page", page.ToString());
+            Response.Headers.Append("X-Page-Size", pageSize.ToString());
+            Response.Headers.Append("X-Total-Pages", ((int)Math.Ceiling(totalBooks / (double)pageSize)).ToString());
             
             return Ok(result);
         }
@@ -176,8 +197,11 @@ namespace EbookReader.API.Controllers
 
             try
             {
-                // Delete the EPUB file from storage
-                await _fileStorageService.DeleteFileAsync(book.FilePath);
+                // Delete the EPUB file from storage (if exists)
+                if (!string.IsNullOrEmpty(book.FilePath))
+                {
+                    await _fileStorageService.DeleteFileAsync(book.FilePath);
+                }
 
                 // Delete cover image if exists
                 if (!string.IsNullOrEmpty(book.CoverImagePath))
@@ -190,6 +214,10 @@ namespace EbookReader.API.Controllers
                 {
                     await _fileStorageService.DeleteFileAsync(chapter.AudioFilePath!);
                 }
+
+                // Also delete any linked KindleBooks
+                var kindleBooks = await _context.KindleBooks.Where(kb => kb.BookId == id).ToListAsync();
+                _context.KindleBooks.RemoveRange(kindleBooks);
 
                 // Delete from database (cascades to chapters, characters, etc.)
                 _context.Books.Remove(book);
@@ -215,6 +243,12 @@ namespace EbookReader.API.Controllers
             if (book == null)
             {
                 return NotFound();
+            }
+
+            // Kindle books without file cannot have cover extracted
+            if (string.IsNullOrEmpty(book.FilePath))
+            {
+                return NotFound("No file available for this book");
             }
 
             try

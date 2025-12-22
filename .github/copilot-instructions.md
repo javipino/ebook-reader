@@ -130,6 +130,12 @@ This is an AI-powered ebook reader application that enables users to read books 
    - **Note**: Book download requires DRM handling (not fully implemented in MVP)
    - **How it works**: User logs into Amazon in browser, extracts session cookies via DevTools, pastes into the app. Cookies expire after a few weeks and need to be refreshed.
 
+12. **Error Handling**: Consistent toast notifications across all pages
+   - Uses react-hot-toast for all user-facing errors
+   - No inline error displays or custom ErrorAlert components
+   - Validation errors, API errors, and success messages all use toast
+   - Books without files (Kindle metadata-only) show toast and redirect to library
+
 ## Project Structure
 
 ```
@@ -296,7 +302,8 @@ VITE_API_URL=https://localhost:5001
 - [x] Chapter parsing with VersOne.Epub
 - [x] Kindle account connection
 - [x] Kindle library sync (manual and automatic)
-- [ ] Basic reader view
+- [x] Basic reader view
+- [x] Standardized error handling with toast notifications
 
 ### Phase 2: AI Integration
 - [ ] Azure OpenAI integration for character analysis
@@ -317,6 +324,7 @@ VITE_API_URL=https://localhost:5001
 - [x] Amazon Kindle API integration (unofficial)
 - [x] Kindle library sync
 - [x] Kindle reading progress sync
+- [x] Metadata-only books support (FilePath nullable)
 - [ ] Full DRM book download support
 - [ ] Sync reading position across devices
 
@@ -335,12 +343,13 @@ VITE_API_URL=https://localhost:5001
 ## Known Issues & Technical Debt
 
 1. **DTOs**: Using entities directly in API responses (should add DTOs)
-2. **Error Handling**: Basic error handling needs improvement
-3. **Validation**: Input validation needs to be added to API endpoints (email format, password strength)
-4. **Refresh Tokens**: Currently using long-lived tokens (30 days), should implement refresh token pattern
-5. **Password Reset**: No password reset functionality yet
-6. **Email Verification**: Email addresses are not verified
-7. **Rate Limiting**: No rate limiting on authentication endpoints
+2. **Validation**: Input validation needs to be added to API endpoints (email format, password strength)
+3. **Refresh Tokens**: Currently using long-lived tokens (30 days), should implement refresh token pattern
+4. **Password Reset**: No password reset functionality yet
+5. **Email Verification**: Email addresses are not verified
+6. **Rate Limiting**: No rate limiting on authentication endpoints
+7. **Kindle DRM**: Cannot download DRM-protected Kindle books (only metadata synced)
+8. **Reading UI for Kindle Books**: Books without files (Kindle metadata-only) cannot be opened - user redirected with toast notification
 
 ## Testing Strategy (Future)
 

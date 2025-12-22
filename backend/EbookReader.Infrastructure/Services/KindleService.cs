@@ -317,14 +317,28 @@ public class KindleService : IKindleService
             _logger.LogInformation("Found {Count} documents in Kindle library for user {UserId}", 
                 kindleBooks.Count, userId);
 
+            // Check existing books once before loop
+            var existingKindleBooks = await _context.KindleBooks
+                .Include(kb => kb.Book)
+                .Where(kb => kb.KindleAccountId == account.Id)
+                .ToListAsync();
+
             foreach (var kindleBook in kindleBooks)
             {
                 try
                 {
+                    // Truncate ASIN to fit database limit (50 characters)
+                    var asin = kindleBook.Asin?.Length > 50 ? kindleBook.Asin.Substring(0, 50) : kindleBook.Asin;
+                    
+                    if (string.IsNullOrEmpty(asin))
+                    {
+                        _logger.LogWarning("Skipping book with empty ASIN: {Title}", kindleBook.Title);
+                        continue;
+                    }
+
                     // Check if document already exists
-                    var existingKindleBook = await _context.KindleBooks
-                        .Include(kb => kb.Book)
-                        .FirstOrDefaultAsync(kb => kb.KindleAccountId == account.Id && kb.Asin == kindleBook.Asin);
+                    var existingKindleBook = existingKindleBooks
+                        .FirstOrDefault(kb => kb.Asin == asin);
 
                     if (existingKindleBook != null)
                     {
@@ -337,59 +351,62 @@ public class KindleService : IKindleService
                         }
                         existingKindleBook.UpdatedAt = DateTime.UtcNow;
                         result.BooksUpdated++;
+                        
+                        _logger.LogDebug("Book already exists, updating: {Title} (ASIN: {Asin})", kindleBook.Title, asin);
                     }
                     else
                     {
-                        // Download and add new document (personal docs are NOT DRM protected)
-                        var bookFile = await DownloadKindleDocumentAsync(sessionCookies, kindleBook.Asin, account.Marketplace);
+                        // For MVP: Create book entry without downloading file (DRM download not implemented yet)
+                        // TODO: Implement DownloadKindleDocumentAsync for personal documents
                         
-                        if (bookFile != null)
+                        // Truncate title and author to fit database column limits
+                        var title = kindleBook.Title?.Length > 500 ? kindleBook.Title.Substring(0, 497) + "..." : kindleBook.Title;
+                        var author = kindleBook.Author?.Length > 200 ? kindleBook.Author.Substring(0, 197) + "..." : kindleBook.Author;
+                        
+                        // Create book entity without file
+                        var newBook = new Book
                         {
-                            // Create book entity
-                            var newBook = new Book
-                            {
-                                Id = Guid.NewGuid(),
-                                UserId = userId,
-                                Title = kindleBook.Title,
-                                Author = kindleBook.Author,
-                                FilePath = bookFile.Path,
-                                CoverImagePath = bookFile.CoverPath,
-                                UploadedAt = DateTime.UtcNow
-                            };
+                            Id = Guid.NewGuid(),
+                            UserId = userId,
+                            Title = title ?? "Unknown Title",
+                            Author = author ?? "Unknown Author",
+                            FilePath = null, // No file yet - download not implemented
+                            CoverImagePath = null,
+                            UploadedAt = DateTime.UtcNow
+                        };
 
-                            _context.Books.Add(newBook);
-                            await _context.SaveChangesAsync();
+                        _context.Books.Add(newBook);
 
-                            var newKindleBook = new KindleBook
-                            {
-                                Id = Guid.NewGuid(),
-                                BookId = newBook.Id,
-                                KindleAccountId = account.Id,
-                                Asin = kindleBook.Asin,
-                                LastKindlePosition = kindleBook.Position,
-                                LastKindlePositionUpdatedAt = kindleBook.Position > 0 ? DateTime.UtcNow : null,
-                                CreatedAt = DateTime.UtcNow,
-                                UpdatedAt = DateTime.UtcNow
-                            };
-
-                            _context.KindleBooks.Add(newKindleBook);
-                            result.BooksAdded++;
-                        }
-                        else
+                        var newKindleBook = new KindleBook
                         {
-                            result.Errors.Add($"Failed to download book: {kindleBook.Title}");
-                        }
+                            Id = Guid.NewGuid(),
+                            BookId = newBook.Id,
+                            KindleAccountId = account.Id,
+                            Asin = asin,
+                            LastKindlePosition = kindleBook.Position,
+                            LastKindlePositionUpdatedAt = kindleBook.Position > 0 ? DateTime.UtcNow : null,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+
+                        _context.KindleBooks.Add(newKindleBook);
+                        existingKindleBooks.Add(newKindleBook); // Add to list to prevent duplicates in same sync
+                        result.BooksAdded++;
+                        
+                        _logger.LogInformation("Added Kindle book metadata (file not downloaded): {Title} (ASIN: {Asin})", kindleBook.Title, asin);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error syncing Kindle book {Asin}", kindleBook.Asin);
+                    _logger.LogError(ex, "Error syncing Kindle book {Asin} - {Title}", kindleBook.Asin, kindleBook.Title);
                     result.Errors.Add($"Error syncing {kindleBook.Title}: {ex.Message}");
                 }
             }
 
             account.LastSyncedAt = DateTime.UtcNow;
-            account.LastSyncError = result.Errors.Any() ? string.Join("; ", result.Errors) : null;
+            // Truncate error message to fit in column (1000 chars max)
+            var errorMessage = result.Errors.Any() ? string.Join("; ", result.Errors) : null;
+            account.LastSyncError = errorMessage?.Length > 1000 ? errorMessage.Substring(0, 997) + "..." : errorMessage;
             await _context.SaveChangesAsync();
 
             result.Success = true;
@@ -547,70 +564,145 @@ public class KindleService : IKindleService
             }
             
             handler.CookieContainer = cookieContainer;
+            handler.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
             using var client = new HttpClient(handler);
             client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Add("Accept", "application/json, text/javascript, */*; q=0.01");
+            client.DefaultRequestHeaders.Add("Accept-Language", "es-ES,es;q=0.9,en;q=0.8");
+            client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
 
-            // Fetch Personal Documents (DOCS) instead of purchased books
-            // Personal documents are NOT DRM protected and can be downloaded
-            var docsUrl = $"{baseUrl}/hz/mycd/digital-console/contentlist/pdocs/dateDsc/";
-            _logger.LogInformation("Fetching Kindle documents from: {Url}", docsUrl);
+            // First, get the page to extract CSRF token
+            var pageUrl = $"{baseUrl}/hz/mycd/digital-console/contentlist/pdocs/dateDsc/";
+            var pageResponse = await client.GetAsync(pageUrl);
+            var pageContent = await pageResponse.Content.ReadAsStringAsync();
             
-            var response = await client.GetAsync(docsUrl);
+            // Extract CSRF token from page
+            var csrfMatch = Regex.Match(pageContent, @"csrfToken[""']?\s*[:=]\s*[""']([^""']+)[""']");
+            var csrfToken = csrfMatch.Success ? csrfMatch.Groups[1].Value : "";
+            
+            if (string.IsNullOrEmpty(csrfToken))
+            {
+                _logger.LogWarning("Could not extract CSRF token from page");
+                return books;
+            }
+            
+            _logger.LogInformation("Extracted CSRF token: {Token}", csrfToken.Substring(0, Math.Min(20, csrfToken.Length)) + "...");
+
+            // Call the AJAX API endpoint to get actual document data
+            var ajaxUrl = $"{baseUrl}/hz/mycd/digital-console/ajax";
+            var activityInput = new
+            {
+                contentType = "KindlePDoc",
+                contentCategoryReference = "pdocs",
+                itemStatusList = new[] { "Active" },
+                fetchCriteria = new
+                {
+                    sortOrder = "DESCENDING",
+                    sortIndex = "DATE",
+                    startIndex = 0,
+                    batchSize = 100,
+                    totalContentCount = -1
+                },
+                surfaceType = "Desktop"
+            };
+            
+            var formData = new Dictionary<string, string>
+            {
+                { "activity", "GetContentOwnershipData" },
+                { "activityInput", JsonSerializer.Serialize(activityInput) },
+                { "clientId", "MYCD_WebService" },
+                { "csrfToken", csrfToken }
+            };
+            
+            _logger.LogInformation("Calling AJAX endpoint: {Url}", ajaxUrl);
+            
+            // Add Referer and Origin headers for AJAX request (Amazon requires this)
+            var ajaxRequest = new HttpRequestMessage(HttpMethod.Post, ajaxUrl);
+            ajaxRequest.Headers.Add("Referer", pageUrl);
+            ajaxRequest.Headers.Add("Origin", baseUrl);
+            ajaxRequest.Content = new FormUrlEncodedContent(formData);
+            
+            _logger.LogInformation("AJAX Request Headers: User-Agent={UA}, Accept={Accept}, Referer={Referer}, Origin={Origin}", 
+                client.DefaultRequestHeaders.UserAgent.ToString(),
+                client.DefaultRequestHeaders.Accept.ToString(),
+                pageUrl,
+                baseUrl);
+            
+            var response = await client.SendAsync(ajaxRequest);
             var content = await response.Content.ReadAsStringAsync();
             
-            _logger.LogInformation("Response status: {Status}, Content length: {Length}", 
-                response.StatusCode, content.Length);
-
-            // Log a snippet of the response to see the structure
-            var snippet = content.Length > 2000 ? content.Substring(0, 2000) : content;
-            _logger.LogInformation("HTML snippet: {Snippet}", snippet);
-
-            // Try to parse from the JSON data embedded in the page
-            // Amazon embeds content data in a script tag
-            var jsonMatch = Regex.Match(content, @"var defined_data\s*=\s*(\{.*?\});", RegexOptions.Singleline);
-            if (jsonMatch.Success)
+            _logger.LogInformation("Response status: {Status}, Content length: {Length}, Content-Type: {ContentType}", 
+                response.StatusCode, content.Length, response.Content.Headers.ContentType?.ToString() ?? "none");
+            
+            // If we got HTML instead of JSON, save first 2000 chars for inspection
+            if (content.TrimStart().StartsWith("<"))
             {
-                _logger.LogInformation("Found embedded JSON data");
-                // Parse the JSON structure
-            }
-            else
-            {
-                _logger.LogWarning("No embedded JSON data found");
+                var htmlSnippet = content.Length > 2000 ? content.Substring(0, 2000) : content;
+                _logger.LogWarning("AJAX endpoint returned HTML instead of JSON. First 2000 chars: {Html}", htmlSnippet);
             }
 
-            // Alternative: Parse from HTML structure
-            // Look for document entries in the content list
-            var docPattern = @"<div[^>]*class=""[^""]*digital-content-row[^""]*""[^>]*data-asin=""([^""]+)""[^>]*>.*?<span[^>]*class=""[^""]*title[^""]*""[^>]*>([^<]+)</span>";
-            var matches = Regex.Matches(content, docPattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-            _logger.LogInformation("HTML pattern matches: {Count}", matches.Count);
-
-            if (matches.Count == 0)
+            // Parse JSON response
+            try
             {
-                // Try alternate pattern for newer Amazon UI
-                var altPattern = @"""asin""\s*:\s*""([^""]+)"".*?""title""\s*:\s*""([^""]+)""";
-                matches = Regex.Matches(content, altPattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-                _logger.LogInformation("JSON pattern matches: {Count}", matches.Count);
-            }
-
-            foreach (Match match in matches)
-            {
-                var asin = match.Groups[1].Value;
-                var title = System.Net.WebUtility.HtmlDecode(match.Groups[2].Value.Trim());
+                using var jsonDoc = JsonDocument.Parse(content);
+                var root = jsonDoc.RootElement;
                 
-                // Skip if we already have this document
-                if (books.Any(b => b.Asin == asin))
-                    continue;
-
-                books.Add(new KindleBookInfo
+                // Check if the response was successful
+                if (root.TryGetProperty("success", out var successProp) && !successProp.GetBoolean())
                 {
-                    Asin = asin,
-                    Title = title,
-                    Author = "Personal Document",
-                    Position = 0,
-                    IsPersonalDocument = true
-                });
+                    _logger.LogWarning("API returned success=false");
+                    return books;
+                }
                 
-                _logger.LogInformation("Found document: {Title} (ASIN: {Asin})", title, asin);
+                // Navigate to the items array
+                if (root.TryGetProperty("GetContentOwnershipData", out var dataObj) &&
+                    dataObj.TryGetProperty("items", out var itemsArray))
+                {
+                    foreach (var item in itemsArray.EnumerateArray())
+                    {
+                        try
+                        {
+                            var asin = item.TryGetProperty("asin", out var asinProp) ? asinProp.GetString() : null;
+                            var title = item.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : null;
+                            var author = item.TryGetProperty("author", out var authorProp) ? authorProp.GetString() : "Unknown";
+                            
+                            if (string.IsNullOrEmpty(asin) || string.IsNullOrEmpty(title))
+                                continue;
+                            
+                            // Skip if we already have this document
+                            if (books.Any(b => b.Asin == asin))
+                                continue;
+
+                            books.Add(new KindleBookInfo
+                            {
+                                Asin = asin,
+                                Title = title,
+                                Author = author,
+                                Position = 0,
+                                IsPersonalDocument = true
+                            });
+                            
+                            _logger.LogInformation("Found document: {Title} by {Author} (ASIN: {Asin})", title, author, asin);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Error parsing document item");
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Could not find items array in response");
+                    // Log a snippet of the response for debugging
+                    var snippet = content.Length > 500 ? content.Substring(0, 500) : content;
+                    _logger.LogInformation("Response snippet: {Snippet}", snippet);
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Failed to parse JSON response");
+                var snippet = content.Length > 500 ? content.Substring(0, 500) : content;
+                _logger.LogInformation("Response snippet: {Snippet}", snippet);
             }
             
             _logger.LogInformation("Total documents found: {Count}", books.Count);
