@@ -46,6 +46,9 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const updateIntervalRef = useRef<number | null>(null);
   const isSourceOpenRef = useRef(false);
   const streamCompleteRef = useRef(false);
+  const endOfStreamCalledRef = useRef(false);
+  const sessionIdRef = useRef(0);
+  const activeSessionIdRef = useRef(0);
   
   // For progressive text chunking
   const textChunksRef = useRef<string[]>([]);
@@ -58,6 +61,30 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const wordsRef = useRef<string[]>([]);
   const wordTimingsRef = useRef<{ startMs: number; endMs: number }[]>([]);
   const alignmentOffsetRef = useRef(0); // Track cumulative time offset for multiple chunks
+  const lastEmittedWordIndexRef = useRef<number>(-2);
+
+  const findWordIndexAtTimeMs = useCallback((timeMs: number) => {
+    const timings = wordTimingsRef.current;
+    if (timings.length === 0) return -1;
+
+    // Find the last word whose start time is <= current time.
+    // This naturally keeps the current word highlighted until the NEXT word starts.
+    let lo = 0;
+    let hi = timings.length - 1;
+    let result = -1;
+
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (timings[mid].startMs <= timeMs) {
+        result = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+
+    return result;
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -67,9 +94,13 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   }, []);
 
   const cleanup = useCallback(() => {
+    // Invalidate any in-flight async handlers from a previous play.
+    activeSessionIdRef.current = ++sessionIdRef.current;
+
     isStoppedRef.current = true;
     isSourceOpenRef.current = false;
     streamCompleteRef.current = false;
+    endOfStreamCalledRef.current = false;
     textChunksRef.current = [];
     currentChunkIndexRef.current = 0;
     chunkInFlightRef.current = false;
@@ -128,6 +159,25 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     return chunks;
   }, []);
 
+  const chunkSentences = useCallback((sentences: string[], maxChars: number): string[] => {
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const sentence of sentences) {
+      const candidate = current ? `${current} ${sentence}` : sentence;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+      } else {
+        if (current) chunks.push(current);
+        // If a single sentence is longer than maxChars, send it as-is.
+        current = sentence;
+      }
+    }
+
+    if (current) chunks.push(current);
+    return chunks;
+  }, []);
+
   // Send the next text chunk to TTS
   const sendNextTextChunk = useCallback(() => {
     if (isStoppedRef.current) return;
@@ -143,8 +193,7 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     const chunk = textChunksRef.current[currentChunkIndexRef.current];
     currentChunkIndexRef.current++;
     chunkInFlightRef.current = true;
-    
-    console.log(`Sending text chunk ${currentChunkIndexRef.current}/${textChunksRef.current.length}: ${chunk.length} chars`);
+
     ws.send(JSON.stringify({ text: chunk, voiceId: voiceIdRef.current }));
   }, []);
 
@@ -153,9 +202,14 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     if (sourceBufferRef.current.updating) return;
     if (pendingChunksRef.current.length === 0) {
       // No more chunks - if stream is complete, end the stream
-      if (streamCompleteRef.current && mediaSourceRef.current?.readyState === 'open') {
+      if (
+        streamCompleteRef.current &&
+        !endOfStreamCalledRef.current &&
+        mediaSourceRef.current?.readyState === 'open'
+      ) {
         try {
           mediaSourceRef.current.endOfStream();
+          endOfStreamCalledRef.current = true;
         } catch (e) {
           // Ignore
         }
@@ -178,6 +232,10 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     cleanup();
     isStoppedRef.current = false;
     streamCompleteRef.current = false;
+    endOfStreamCalledRef.current = false;
+
+    const sessionId = ++sessionIdRef.current;
+    activeSessionIdRef.current = sessionId;
 
     // Store full text and split into words for tracking
     fullTextRef.current = text;
@@ -185,44 +243,19 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     setTotalWords(wordsRef.current.length);
     setCurrentWordIndex(-1);
 
-    // Split text into sentences for progressive loading
-    textChunksRef.current = splitTextIntoSentences(text);
+    // Split text into sentence-like chunks and group them to reduce WebSocket messages.
+    // (Smaller chunks = faster first audio, larger chunks = fewer messages.)
+    const sentences = splitTextIntoSentences(text);
+    textChunksRef.current = chunkSentences(sentences, 900);
     currentChunkIndexRef.current = 0;
     chunkInFlightRef.current = false;
     voiceIdRef.current = voiceId;
-
-    console.log(`Split text into ${textChunksRef.current.length} sentences, ${wordsRef.current.length} words`);
-    console.log('Sentences:', textChunksRef.current);
 
     setIsLoading(true);
     setIsPlaying(false);
     setIsPaused(false);
     setCurrentTime(0);
     setDuration(0);
-
-    let hasStartedPlaying = false;
-
-    const tryStartPlayback = async () => {
-      if (hasStartedPlaying || !audioElementRef.current || isStoppedRef.current) return;
-      
-      const buffered = audioElementRef.current.buffered;
-      // Wait for at least 0.3 seconds of buffered audio before playing
-      if (buffered.length > 0 && buffered.end(0) > 0.3) {
-        hasStartedPlaying = true;
-        setIsLoading(false);
-        console.log('Starting playback, buffered:', buffered.end(0), 'seconds');
-        try {
-          await audioElementRef.current.play();
-        } catch (e: any) {
-          // Handle autoplay restrictions
-          if (e.name === 'NotAllowedError') {
-            console.warn('Autoplay blocked, waiting for user interaction');
-          } else {
-            console.error('Error starting playback:', e);
-          }
-        }
-      }
-    };
 
     try {
       // Create MediaSource for streaming playback
@@ -234,6 +267,54 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
       audio.playbackRate = speed;
       audioElementRef.current = audio;
 
+      // Set up audio event handlers BEFORE calling play().
+      // If play() starts immediately, we still want onplay/onpause to update UI state.
+      audio.onplay = () => {
+        if (activeSessionIdRef.current !== sessionId) return;
+        setIsPlaying(true);
+        setIsPaused(false);
+        setIsLoading(false);
+      };
+
+      audio.onpause = () => {
+        if (activeSessionIdRef.current !== sessionId) return;
+        if (!isStoppedRef.current) {
+          setIsPlaying(false);
+          setIsPaused(true);
+        }
+      };
+
+      audio.onended = () => {
+        if (activeSessionIdRef.current !== sessionId) return;
+        setIsPlaying(false);
+        setIsPaused(false);
+        setCurrentTime(0);
+        if (updateIntervalRef.current) {
+          clearInterval(updateIntervalRef.current);
+        }
+        onComplete?.();
+      };
+
+      audio.onerror = () => {
+        if (activeSessionIdRef.current !== sessionId) return;
+        if (!isStoppedRef.current) {
+          setIsPlaying(false);
+          setIsLoading(false);
+          onError?.('Error playing audio');
+        }
+      };
+
+      // IMPORTANT: Call play() immediately while still in user gesture call stack.
+      // This satisfies browser autoplay policy. Audio will buffer and play once data arrives.
+      audio.play().catch((e: any) => {
+        if (activeSessionIdRef.current !== sessionId) return;
+        if (e.name === 'NotAllowedError') {
+          onError?.('Playback blocked by browser autoplay policy');
+        } else {
+          onError?.('Error starting playback');
+        }
+      });
+
       // Wait for MediaSource to open
       await new Promise<void>((resolve, reject) => {
         mediaSource.addEventListener('sourceopen', () => {
@@ -243,10 +324,9 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
             sourceBufferRef.current = sourceBuffer;
             isSourceOpenRef.current = true;
 
-            // When a chunk finishes appending, try to append next one and maybe start playing
+            // When a chunk finishes appending, try to append next one
             sourceBuffer.addEventListener('updateend', () => {
               appendNextChunk();
-              tryStartPlayback();
             });
 
             resolve();
@@ -263,63 +343,25 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
         setTimeout(() => reject(new Error('MediaSource timeout')), 5000);
       });
 
-      // Set up audio event handlers
-      audio.onplay = () => {
-        setIsPlaying(true);
-        setIsPaused(false);
-        setIsLoading(false);
-      };
-
-      audio.onpause = () => {
-        if (!isStoppedRef.current) {
-          setIsPlaying(false);
-          setIsPaused(true);
-        }
-      };
-
-      audio.onended = () => {
-        setIsPlaying(false);
-        setIsPaused(false);
-        setCurrentTime(0);
-        if (updateIntervalRef.current) {
-          clearInterval(updateIntervalRef.current);
-        }
-        onComplete?.();
-      };
-
-      audio.onerror = () => {
-        if (!isStoppedRef.current) {
-          setIsPlaying(false);
-          setIsLoading(false);
-          onError?.('Error playing audio');
-        }
-      };
-
       // Start progress updates with word tracking
       updateIntervalRef.current = window.setInterval(() => {
         if (audioElementRef.current) {
-          const time = audioElementRef.current.currentTime;
+          const audio = audioElementRef.current;
+          const time = audio.currentTime;
           setCurrentTime(time);
-          if (audioElementRef.current.duration && isFinite(audioElementRef.current.duration)) {
-            setDuration(audioElementRef.current.duration);
+          if (audio.duration && isFinite(audio.duration)) {
+            setDuration(audio.duration);
           }
-          onProgress?.(time, audioElementRef.current.duration || 0);
-          
-          // Update current word index based on timing
-          // A word is highlighted from its startMs until the NEXT word's startMs
+          onProgress?.(time, audio.duration || 0);
+
+          // Update current word index based on timing.
+          // Keep a word highlighted until the next word starts.
           const timeMs = time * 1000;
-          const timings = wordTimingsRef.current;
-          let wordIndex = -1;
-          
-          for (let i = 0; i < timings.length; i++) {
-            const nextWordStart = i < timings.length - 1 ? timings[i + 1].startMs : Infinity;
-            if (timeMs >= timings[i].startMs && timeMs < nextWordStart) {
-              wordIndex = i;
-              break;
-            }
+          const wordIndex = findWordIndexAtTimeMs(timeMs);
+          if (wordIndex !== lastEmittedWordIndexRef.current) {
+            lastEmittedWordIndexRef.current = wordIndex;
+            setCurrentWordIndex(wordIndex);
           }
-          
-          setCurrentWordIndex(wordIndex);
         }
       }, 50); // Update more frequently for smoother word tracking
 
@@ -339,13 +381,12 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
 
       ws.onmessage = async (event) => {
         if (isStoppedRef.current) return;
+        if (activeSessionIdRef.current !== sessionId) return;
 
         if (event.data instanceof Blob) {
           // Binary audio data - add to queue
           const arrayBuffer = await event.data.arrayBuffer();
           const chunk = new Uint8Array(arrayBuffer);
-          
-          console.log('Received audio chunk:', chunk.length, 'bytes');
           
           pendingChunksRef.current.push(chunk);
 
@@ -353,9 +394,6 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
           if (sourceBufferRef.current && !sourceBufferRef.current.updating) {
             appendNextChunk();
           }
-
-          // Try to start playback (will check if buffered enough)
-          tryStartPlayback();
         } else {
           // Text message (control or alignment)
           try {
@@ -364,8 +402,6 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
               // Process alignment data - convert character timings to word timings
               const { chars, charStartTimesMs, charDurationsMs } = message.data;
               if (chars && charStartTimesMs && charDurationsMs) {
-                console.log('Received alignment for', chars.length, 'chars, offset:', alignmentOffsetRef.current);
-                
                 // Build words from characters and their timings
                 let currentWord = '';
                 let wordStartMs = 0;
@@ -406,8 +442,6 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
                   const lastIdx = chars.length - 1;
                   alignmentOffsetRef.current = baseOffset + charStartTimesMs[lastIdx] + charDurationsMs[lastIdx];
                 }
-                
-                console.log('Word timings updated:', wordTimingsRef.current.length, 'words, new offset:', alignmentOffsetRef.current);
               }
             } else if (message.type === 'complete') {
               // Current text chunk is done - send next one
@@ -433,12 +467,15 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
       };
 
       ws.onerror = () => {
-        if (!isStoppedRef.current) {
-          onError?.('WebSocket connection failed');
-        }
+        // Browsers can emit onerror even for normal closes.
+        if (isStoppedRef.current) return;
+        if (activeSessionIdRef.current !== sessionId) return;
+        if (streamCompleteRef.current) return;
+        onError?.('WebSocket connection failed');
       };
 
       ws.onclose = () => {
+        if (activeSessionIdRef.current !== sessionId) return;
         streamCompleteRef.current = true;
         if (pendingChunksRef.current.length === 0 && !sourceBufferRef.current?.updating) {
           appendNextChunk();
@@ -451,7 +488,7 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
       const errorMessage = error.message || 'Failed to stream audio';
       onError?.(errorMessage);
     }
-  }, [cleanup, speed, onProgress, onComplete, onError, appendNextChunk, splitTextIntoSentences, sendNextTextChunk]);
+  }, [cleanup, speed, onProgress, onComplete, onError, appendNextChunk, splitTextIntoSentences, chunkSentences, sendNextTextChunk, findWordIndexAtTimeMs]);
 
   const pause = useCallback(() => {
     if (audioElementRef.current && !audioElementRef.current.paused) {
@@ -503,11 +540,20 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   }, []);
 
   const seekToPosition = useCallback((position: number) => {
-    if (audioElementRef.current && audioElementRef.current.duration) {
-      const newTime = Math.max(0, Math.min(position * audioElementRef.current.duration, audioElementRef.current.duration));
-      audioElementRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-    }
+    const audio = audioElementRef.current;
+    if (!audio) return;
+
+    const duration = audio.duration;
+    const bufferedEnd = audio.buffered.length > 0 ? audio.buffered.end(audio.buffered.length - 1) : 0;
+
+    // Streaming audio often reports duration as Infinity/NaN until the stream ends.
+    // Seek within what we know is available.
+    const seekMax = Number.isFinite(duration) ? duration : bufferedEnd;
+    if (!seekMax || !Number.isFinite(seekMax) || seekMax <= 0) return;
+
+    const newTime = Math.max(0, Math.min(position * seekMax, seekMax));
+    audio.currentTime = newTime;
+    setCurrentTime(newTime);
   }, []);
 
   return {

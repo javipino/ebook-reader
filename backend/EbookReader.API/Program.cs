@@ -120,8 +120,7 @@ if (app.Environment.IsDevelopment())
     app.UseHangfireDashboard("/hangfire");
 }
 
-// Register Hangfire recurring jobs for Kindle sync
-KindleBackgroundJobs.RegisterRecurringJobs();
+// (No recurring background jobs registered at startup)
 
 // Enable WebSockets for TTS streaming
 app.UseWebSockets(new WebSocketOptions
