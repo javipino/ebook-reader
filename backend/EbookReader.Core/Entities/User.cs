@@ -9,6 +9,10 @@ namespace EbookReader.Core.Entities
         public DateTime CreatedAt { get; set; }
         public DateTime? LastLoginAt { get; set; }
 
+        // User preferences
+        public string PreferredTtsProvider { get; set; } = "elevenlabs"; // elevenlabs | azure
+        public string? PreferredAzureVoiceName { get; set; }
+
         // Navigation properties
         public ICollection<Book> Books { get; set; } = new List<Book>();
         public ICollection<ReadingProgress> ReadingProgresses { get; set; } = new List<ReadingProgress>();

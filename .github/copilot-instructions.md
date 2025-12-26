@@ -43,7 +43,13 @@ This is an AI-powered ebook reader application that enables users to read books 
   - **Features**: WebSocket streaming for smooth continuous playback
   - **Pricing**: Pay-per-use, neural voices
   - **API**: WebSocket streaming via backend proxy at `/api/ttsstream/stream`
+      - Auth: pass JWT as query string `access_token`
   - Configure via `ElevenLabs:*` in appsettings.json
+
+- **Text-to-Speech (alternative - implemented)**: Azure Speech (Microsoft Cognitive Services Speech)
+   - Used as an optional provider when ElevenLabs credits are exhausted
+   - Configure via `AzureSpeech:*` in appsettings.json
+   - Provider selection UI: `/admin/settings` (stored per-user in database; applied server-side during TTS streaming)
 - **Alternative TTS options** (evaluated):
   - Google Cloud TTS: Free tier 1M chars/month, good quality
   - OpenAI TTS: $15/1M chars, excellent quality, 6 voices
@@ -227,6 +233,9 @@ ConnectionStrings__DefaultConnection=Host=localhost;Port=5432;Database=EbookRead
 Kindle__EncryptionKey=your-32-character-encryption-key-here
 ElevenLabs__ApiKey=your-elevenlabs-api-key
 ElevenLabs__DefaultVoiceId=6bNjXphfWPUDHuFkgDt3
+AzureSpeech__Key=your-azure-speech-key
+AzureSpeech__Region=your-azure-speech-region
+AzureSpeech__DefaultVoiceName=en-US-JennyNeural
 ```
 
 **Frontend (.env)**:

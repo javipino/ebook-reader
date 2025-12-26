@@ -28,6 +28,8 @@ namespace EbookReader.Infrastructure.Data
                 entity.Property(e => e.Username).IsRequired().HasMaxLength(100);
                 entity.Property(e => e.Email).IsRequired().HasMaxLength(255);
                 entity.Property(e => e.PasswordHash).IsRequired();
+                entity.Property(e => e.PreferredTtsProvider).IsRequired().HasMaxLength(20).HasDefaultValue("elevenlabs");
+                entity.Property(e => e.PreferredAzureVoiceName).HasMaxLength(100);
                 entity.HasIndex(e => e.Username).IsUnique();
                 entity.HasIndex(e => e.Email).IsUnique();
             });

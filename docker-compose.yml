@@ -28,6 +28,12 @@ services:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=EbookReader;Username=postgres;Password=postgres
       - FileStorage__Type=Local
       - FileStorage__LocalPath=/app/storage
+      # Azure Speech config: rely on appsettings.json by default.
+      # If you want to override via environment variables, add these explicitly
+      # (e.g. in a local override compose file or by setting them in your shell):
+      # - AzureSpeech__Key=...
+      # - AzureSpeech__Region=...
+      # - AzureSpeech__DefaultVoiceName=...
     depends_on:
       - db
     volumes:

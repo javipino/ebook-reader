@@ -2,7 +2,12 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using EbookReader.Infrastructure.Services;
+using EbookReader.Infrastructure.Data;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace EbookReader.API.Controllers;
 
@@ -14,11 +19,22 @@ namespace EbookReader.API.Controllers;
 public class TtsStreamController : ControllerBase
 {
     private readonly ElevenLabsStreamingService _streamingService;
+    private readonly AzureSpeechStreamingService _azureStreamingService;
+    private readonly EbookReaderDbContext _db;
+    private readonly IConfiguration _config;
     private readonly ILogger<TtsStreamController> _logger;
 
-    public TtsStreamController(ElevenLabsStreamingService streamingService, ILogger<TtsStreamController> logger)
+    public TtsStreamController(
+        ElevenLabsStreamingService streamingService,
+        AzureSpeechStreamingService azureStreamingService,
+        EbookReaderDbContext db,
+        IConfiguration config,
+        ILogger<TtsStreamController> logger)
     {
         _streamingService = streamingService;
+        _azureStreamingService = azureStreamingService;
+        _db = db;
+        _config = config;
         _logger = logger;
     }
 
@@ -38,8 +54,23 @@ public class TtsStreamController : ControllerBase
             return;
         }
 
+        // Enforce auth without rejecting the HTTP Upgrade handshake.
+        // WebSocket clients generally can't read a 401 body, so we authenticate manually
+        // and send a structured error message over the socket if the token is missing/invalid.
+        var authResult = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+        if (authResult.Succeeded && authResult.Principal is not null)
+        {
+            HttpContext.User = authResult.Principal;
+        }
+
         using var webSocket = await HttpContext.WebSockets.AcceptWebSocketAsync();
         _logger.LogInformation("TTS WebSocket connection accepted");
+
+        if (!authResult.Succeeded)
+        {
+            await SendErrorAndClose(webSocket, "Unauthorized");
+            return;
+        }
 
         try
         {
@@ -73,14 +104,60 @@ public class TtsStreamController : ControllerBase
                         continue;
                     }
 
-                    _logger.LogInformation("Starting TTS stream for {Length} characters", request.Text.Length);
+                    var userId = TryGetUserId();
+                    if (userId is null)
+                    {
+                        await SendErrorAndClose(webSocket, "Unauthorized");
+                        return;
+                    }
 
-                    // Stream the audio for this chunk
-                    await _streamingService.StreamTextToSpeechAsync(
-                        request.Text,
-                        webSocket,
-                        request.VoiceId,
-                        CancellationToken.None);
+                    var user = await _db.Users
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(u => u.Id == userId.Value, CancellationToken.None);
+
+                    var provider = ResolveProvider(request.Provider, user?.PreferredTtsProvider);
+
+                    // If the client does not provide voice fields, default from user settings / app configuration.
+                    var resolvedVoiceName = string.IsNullOrWhiteSpace(request.VoiceName)
+                        ? (string.IsNullOrWhiteSpace(user?.PreferredAzureVoiceName)
+                            ? _config["AzureSpeech:DefaultVoiceName"]
+                            : user!.PreferredAzureVoiceName)
+                        : request.VoiceName;
+
+                    var resolvedVoiceId = string.IsNullOrWhiteSpace(request.VoiceId)
+                        ? _config["ElevenLabs:DefaultVoiceId"]
+                        : request.VoiceId;
+
+                    _logger.LogInformation("Starting TTS stream ({Provider}) for {Length} characters", provider, request.Text.Length);
+
+                    try
+                    {
+                        if (provider is "azure" or "azurespeech" or "azureai")
+                        {
+                            await _azureStreamingService.StreamTextToSpeechAsync(
+                                request.Text,
+                                webSocket,
+                                resolvedVoiceName,
+                                CancellationToken.None);
+                        }
+                        else
+                        {
+                            // Default: ElevenLabs
+                            await _streamingService.StreamTextToSpeechAsync(
+                                request.Text,
+                                webSocket,
+                                resolvedVoiceId,
+                                CancellationToken.None);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error streaming audio for provider {Provider}", provider);
+                        var errorJson = JsonSerializer.Serialize(new { type = "error", message = ex.Message });
+                        var errorBytes = Encoding.UTF8.GetBytes(errorJson);
+                        await webSocket.SendAsync(new ArraySegment<byte>(errorBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                        // Continue to allow next chunk (e.g. user switches provider/config)
+                    }
                     
                     // After streaming completes, continue listening for more chunks
                 }
@@ -113,10 +190,31 @@ public class TtsStreamController : ControllerBase
         await webSocket.SendAsync(new ArraySegment<byte>(errorBytes), WebSocketMessageType.Text, true, CancellationToken.None);
         await webSocket.CloseAsync(WebSocketCloseStatus.InvalidPayloadData, message, CancellationToken.None);
     }
+
+    private Guid? TryGetUserId()
+    {
+        var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                          ?? User.FindFirstValue("sub");
+
+        return Guid.TryParse(userIdString, out var userId) ? userId : null;
+    }
+
+    private static string ResolveProvider(string? requestProvider, string? userPreferredProvider)
+    {
+        var raw = string.IsNullOrWhiteSpace(requestProvider)
+            ? userPreferredProvider
+            : requestProvider;
+
+        var normalized = (raw ?? "elevenlabs").Trim().ToLowerInvariant();
+        if (normalized is "azureai" or "azurespeech" or "azure") return "azure";
+        return "elevenlabs";
+    }
 }
 
 public class TtsStreamRequest
 {
     public string Text { get; set; } = string.Empty;
     public string? VoiceId { get; set; }
+    public string? Provider { get; set; }
+    public string? VoiceName { get; set; }
 }

@@ -14,7 +14,7 @@ export interface UseStreamingTtsReturn {
   duration: number;
   currentWordIndex: number;
   totalWords: number;
-  play: (text: string, voiceId?: string) => Promise<void>;
+  play: (text: string, voiceId?: string, provider?: 'elevenlabs' | 'azure', voiceName?: string) => Promise<void>;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -55,6 +55,8 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const currentChunkIndexRef = useRef(0);
   const chunkInFlightRef = useRef(false);
   const voiceIdRef = useRef<string | undefined>(undefined);
+  const providerRef = useRef<'elevenlabs' | 'azure' | undefined>(undefined);
+  const voiceNameRef = useRef<string | undefined>(undefined);
   
   // For word tracking
   const fullTextRef = useRef<string>('');
@@ -194,7 +196,12 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     currentChunkIndexRef.current++;
     chunkInFlightRef.current = true;
 
-    ws.send(JSON.stringify({ text: chunk, voiceId: voiceIdRef.current }));
+    const payload: any = { text: chunk };
+    if (voiceIdRef.current) payload.voiceId = voiceIdRef.current;
+    if (providerRef.current) payload.provider = providerRef.current;
+    if (voiceNameRef.current) payload.voiceName = voiceNameRef.current;
+
+    ws.send(JSON.stringify(payload));
   }, []);
 
   const appendNextChunk = useCallback(() => {
@@ -227,7 +234,7 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     }
   }, []);
 
-  const play = useCallback(async (text: string, voiceId?: string) => {
+  const play = useCallback(async (text: string, voiceId?: string, provider?: 'elevenlabs' | 'azure', voiceName?: string) => {
     // Stop any existing playback
     cleanup();
     isStoppedRef.current = false;
@@ -250,6 +257,8 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     currentChunkIndexRef.current = 0;
     chunkInFlightRef.current = false;
     voiceIdRef.current = voiceId;
+    providerRef.current = provider;
+    voiceNameRef.current = voiceName;
 
     setIsLoading(true);
     setIsPlaying(false);
@@ -369,7 +378,17 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
       const apiUrl = import.meta.env.VITE_API_URL || 'https://localhost:5001';
       const wsProtocol = apiUrl.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = apiUrl.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '');
-      const wsUrl = `${wsProtocol}//${wsHost}/api/ttsstream/stream`;
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setIsLoading(false);
+        setIsPlaying(false);
+        setIsPaused(false);
+        onError?.('Not authenticated');
+        cleanup();
+        return;
+      }
+
+      const wsUrl = `${wsProtocol}//${wsHost}/api/ttsstream/stream?access_token=${encodeURIComponent(token)}`;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -458,7 +477,12 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
                 sendNextTextChunk();
               }
             } else if (message.type === 'error') {
-              onError?.(message.message);
+              // Treat as fatal for this session; otherwise UI can get stuck in loading.
+              setIsLoading(false);
+              setIsPlaying(false);
+              setIsPaused(false);
+              onError?.(message.message || 'TTS error');
+              cleanup();
             }
           } catch (e) {
             // Ignore parse errors
@@ -471,7 +495,11 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
         if (isStoppedRef.current) return;
         if (activeSessionIdRef.current !== sessionId) return;
         if (streamCompleteRef.current) return;
+        setIsLoading(false);
+        setIsPlaying(false);
+        setIsPaused(false);
         onError?.('WebSocket connection failed');
+        cleanup();
       };
 
       ws.onclose = () => {

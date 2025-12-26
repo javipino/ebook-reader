@@ -20,6 +20,7 @@ export default function ReaderPage() {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [loading, setLoading] = useState(true);
+
   // TTS Hook - WebSocket streaming
   const tts = useStreamingTts({
     onComplete: () => {
@@ -33,6 +34,7 @@ export default function ReaderPage() {
 
   useEffect(() => {
     fetchBook();
+
     // Cleanup TTS when leaving page
     return () => {
       tts.stop();

@@ -31,6 +31,11 @@ public class ElevenLabsStreamingService
         string? voiceId = null,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(_apiKey))
+        {
+            throw new InvalidOperationException("ElevenLabs API key is not configured");
+        }
+
         var effectiveVoiceId = voiceId ?? _defaultVoiceId;
         var wsUrl = $"wss://api.elevenlabs.io/v1/text-to-speech/{effectiveVoiceId}/stream-input?model_id={_modelId}";
 

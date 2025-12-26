@@ -9,7 +9,8 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 - EPUB upload + parsing into chapters
 - **Amazon Kindle integration** - sync library and reading progress
 - AI-powered character identification (planned)
-- Text-to-speech with character-specific voices (planned)
+- Text-to-speech streaming with word highlighting
+- Selectable TTS provider (ElevenLabs or Azure Speech)
 - Cross-platform support (Web first, mobile later)
 
 ## Tech Stack
@@ -43,7 +44,8 @@ An intelligent ebook reader with AI-powered character recognition and text-to-sp
 
 ### AI Services
 - Azure OpenAI (character analysis)
-- Google Cloud TTS (text-to-speech)
+- ElevenLabs (streaming TTS)
+- Azure Speech (streaming TTS)
 
 ### Infrastructure
 - Azure App Service
@@ -120,6 +122,23 @@ The password must match the value configured in `docker-compose.yml`.
 - `DELETE /api/books/{id}` - Delete book
 - `GET /api/books/{id}/characters` - Get identified characters (planned)
 - `POST /api/audio/convert` - Convert text to speech (planned)
+
+### Text-to-Speech (TTS)
+- `WS /api/ttsstream/stream` - WebSocket endpoint for streaming TTS audio + alignment (authenticated)
+  - Auth: pass JWT as query string `access_token` (WebSocket clients can’t reliably send Authorization headers)
+  - Provider/voice are resolved server-side from the current user’s saved settings (DB)
+
+## TTS Provider Settings
+
+- Settings page: `/admin/settings` (per-user)
+- Stored in the database on the `User` record (applies to all books)
+- API:
+  - `GET /api/users/me/settings`
+  - `PUT /api/users/me/settings`
+- Backend config keys (for Azure provider):
+  - `AzureSpeech:Key`
+  - `AzureSpeech:Region`
+  - `AzureSpeech:DefaultVoiceName`
 
 ### Kindle Integration (Authenticated)
 - `GET /api/kindle/status` - Get Kindle account connection status

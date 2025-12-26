@@ -59,6 +59,7 @@ builder.Services.AddScoped<IKindleService, KindleService>();
 // TTS Service - ElevenLabs
 builder.Services.AddHttpClient<ITtsService, ElevenLabsTtsService>();
 builder.Services.AddSingleton<ElevenLabsStreamingService>();
+builder.Services.AddSingleton<AzureSpeechStreamingService>();
 
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration
@@ -82,6 +83,24 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            // WebSocket clients can't send Authorization headers reliably.
+            // We support passing the JWT as a query string param for the TTS stream endpoint.
+            var accessToken = context.Request.Query["access_token"].ToString();
+            var path = context.HttpContext.Request.Path;
+
+            if (!string.IsNullOrWhiteSpace(accessToken) && path.StartsWithSegments("/api/ttsstream/stream"))
+            {
+                context.Token = accessToken;
+            }
+
+            return Task.CompletedTask;
+        }
+    };
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -120,6 +139,32 @@ if (app.Environment.IsDevelopment())
     app.UseHangfireDashboard("/hangfire");
 }
 
+// Auto-apply EF Core migrations in Development.
+// This makes Docker Compose startup smoother (no manual migration step).
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("StartupMigrations");
+    var db = scope.ServiceProvider.GetRequiredService<EbookReaderDbContext>();
+
+    const int maxAttempts = 15;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            logger.LogInformation("Applying database migrations (attempt {Attempt}/{MaxAttempts})", attempt, maxAttempts);
+            await db.Database.MigrateAsync();
+            logger.LogInformation("Database migrations applied successfully");
+            break;
+        }
+        catch (Exception ex) when (attempt < maxAttempts)
+        {
+            logger.LogWarning(ex, "Database not ready yet; retrying...");
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
+}
+
 // (No recurring background jobs registered at startup)
 
 // Enable WebSockets for TTS streaming
@@ -138,7 +183,16 @@ app.Run();
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "Application terminated unexpectedly");
+    // EF Core design-time services can trigger a HostAbortedException during `dotnet ef`.
+    // It's expected and should not be logged as a fatal application crash.
+    if (ex is Microsoft.Extensions.Hosting.HostAbortedException)
+    {
+        Log.Information("Host aborted (design-time)");
+    }
+    else
+    {
+        Log.Fatal(ex, "Application terminated unexpectedly");
+    }
 }
 finally
 {

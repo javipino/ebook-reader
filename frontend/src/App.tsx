@@ -8,6 +8,7 @@ import LibraryPage from './pages/LibraryPage'
 import ReaderPage from './pages/ReaderPage'
 import LoginPage from './pages/LoginPage'
 import KindleSettingsPage from './pages/KindleSettingsPage'
+import AdminSettingsPage from './pages/AdminSettingsPage'
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
             <Route path="library" element={<ProtectedRoute><LibraryPage /></ProtectedRoute>} />
             <Route path="reader/:bookId" element={<ProtectedRoute><ReaderPage /></ProtectedRoute>} />
             <Route path="kindle-settings" element={<ProtectedRoute><KindleSettingsPage /></ProtectedRoute>} />
+            <Route path="admin/settings" element={<ProtectedRoute><AdminSettingsPage /></ProtectedRoute>} />
           </Route>
         </Routes>
       </AuthProvider>
