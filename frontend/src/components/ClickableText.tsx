@@ -95,10 +95,10 @@ export function ClickableText({
 
       const wordIndexStr = target.getAttribute('data-word-index');
       const wordIndex = wordIndexStr ? Number.parseInt(wordIndexStr, 10) : -1;
-      const total = wordElementsRef.current.length;
-      if (!Number.isFinite(wordIndex) || wordIndex < 0 || total <= 0) return;
+      if (!Number.isFinite(wordIndex) || wordIndex < 0) return;
 
-      onWordClickRef.current(wordIndex / total);
+      // Pass the word index directly (not as a fraction)
+      onWordClickRef.current(wordIndex);
     };
 
     container.addEventListener('pointerdown', handlePointerDown, { passive: false });

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -20,12 +20,13 @@ export default function ReaderPage() {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const playbackLocationRef = useRef<{ chapterIdx: number; page: number } | null>(null);
 
   // TTS Hook - WebSocket streaming
   const tts = useStreamingTts({
     onComplete: () => {
-      // Auto-advance to next page when audio finishes
-      handleAutoAdvance();
+      // Whole queued stream finished.
+      toast.success('Finished reading!');
     },
     onError: (error: string) => {
       toast.error(error);
@@ -65,9 +66,45 @@ export default function ReaderPage() {
         (ch: Chapter) => ch.chapterNumber === progress.currentChapterNumber
       );
 
-      if (chapterIdx >= 0) {
-        setCurrentChapterIndex(chapterIdx);
-        setCurrentPage(progress.currentPosition);
+      const resolvedChapterIdx = chapterIdx >= 0 ? chapterIdx : 0;
+      const resolvedChapter = sortedBook.chapters[resolvedChapterIdx];
+      const totalPages = resolvedChapter ? getTotalPages(resolvedChapter.content) : 1;
+      const maxPage = Math.max(0, totalPages - 1);
+      const clampedPage = Math.max(0, Math.min(progress.currentPosition, maxPage));
+
+      const lastChapterIdx = Math.max(0, sortedBook.chapters.length - 1);
+      const lastChapter = sortedBook.chapters[lastChapterIdx];
+      const lastChapterTotalPages = lastChapter ? getTotalPages(lastChapter.content) : 1;
+      const lastChapterLastPage = Math.max(0, lastChapterTotalPages - 1);
+
+      // If a previous listening session ran all the way to the end (or a bug advanced too far),
+      // reset to the start so the user isn't stuck at an empty/end state.
+      const isAtEndOfBook =
+        resolvedChapterIdx === lastChapterIdx &&
+        clampedPage >= lastChapterLastPage;
+
+      if (progress.isListening && isAtEndOfBook) {
+        setCurrentChapterIndex(0);
+        setCurrentPage(0);
+        toast.success('Progress reset to start');
+
+        await api.put(`/api/readingprogress/${bookId}`, {
+          currentChapterNumber: sortedBook.chapters[0].chapterNumber,
+          currentPosition: 0,
+          isListening: false
+        });
+      } else {
+        setCurrentChapterIndex(resolvedChapterIdx);
+        setCurrentPage(clampedPage);
+
+        // If the stored page is out of range (e.g. page count changed), persist the corrected value.
+        if (chapterIdx >= 0 && clampedPage !== progress.currentPosition) {
+          await api.put(`/api/readingprogress/${bookId}`, {
+            currentChapterNumber: sortedBook.chapters[resolvedChapterIdx].chapterNumber,
+            currentPosition: clampedPage,
+            isListening: progress.isListening
+          });
+        }
       }
     } catch (err: any) {
       console.error('Error fetching book:', err);
@@ -106,66 +143,44 @@ export default function ReaderPage() {
     return chapter ? getPageContent(chapter.content, currentPage) : '';
   };
 
-  const handleAutoAdvance = useCallback(() => {
-    const totalPages = getTotalPagesInChapter();
+  const htmlToPlainText = useCallback((html: string) => {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    return (tempDiv.textContent || tempDiv.innerText || '').trim();
+  }, []);
 
-    if (currentPage < totalPages - 1) {
-      // Move to next page in same chapter
-      const newPage = currentPage + 1;
-      setCurrentPage(newPage);
-      saveProgress(currentChapterIndex, newPage);
-      window.scrollTo(0, 0);
-      
-      // Auto-start reading next page
-      setTimeout(() => {
-        const nextPageContent = book?.chapters[currentChapterIndex] 
-          ? getPageContent(book.chapters[currentChapterIndex].content, newPage)
-          : '';
-        if (nextPageContent) {
-          // Strip HTML for TTS
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = nextPageContent;
-          const plainText = tempDiv.textContent || tempDiv.innerText || '';
-          if (plainText.trim()) {
-            tts.play(plainText.trim());
-          }
-        }
-      }, 500);
-    } else if (book && currentChapterIndex < book.chapters.length - 1) {
-      // Move to next chapter
-      const nextChapterIdx = currentChapterIndex + 1;
-      setCurrentChapterIndex(nextChapterIdx);
-      setCurrentPage(0);
-      saveProgress(nextChapterIdx, 0);
-      window.scrollTo(0, 0);
-      toast.success('Next chapter');
-      
-      // Auto-start reading next chapter
-      setTimeout(() => {
-        const nextChapterContent = book?.chapters[nextChapterIdx]
-          ? getPageContent(book.chapters[nextChapterIdx].content, 0)
-          : '';
-        if (nextChapterContent) {
-          // Strip HTML for TTS
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = nextChapterContent;
-          const plainText = tempDiv.textContent || tempDiv.innerText || '';
-          if (plainText.trim()) {
-            tts.play(plainText.trim());
-          }
-        }
-      }, 500);
-    } else {
-      // Finished book
-      toast.success('Finished reading!');
+  const getPagePlainText = useCallback((chapterIdx: number, pageNum: number) => {
+    if (!book) return '';
+    const chapter = book.chapters[chapterIdx];
+    if (!chapter) return '';
+    const pageHtml = getPageContent(chapter.content, pageNum);
+    if (!pageHtml) return '';
+    return htmlToPlainText(pageHtml);
+  }, [book, htmlToPlainText]);
+
+  const getNextLocation = useCallback((chapterIdx: number, pageNum: number) => {
+    if (!book) return null;
+    const chapter = book.chapters[chapterIdx];
+    if (!chapter) return null;
+
+    const totalPages = getTotalPages(chapter.content);
+    if (pageNum < totalPages - 1) {
+      return { chapterIdx, page: pageNum + 1, chapterChanged: false };
     }
-  }, [book, currentChapterIndex, currentPage, getTotalPagesInChapter, saveProgress, tts]);
+
+    if (chapterIdx < book.chapters.length - 1) {
+      return { chapterIdx: chapterIdx + 1, page: 0, chapterChanged: true };
+    }
+
+    return null;
+  }, [book]);
 
   const handlePreviousPage = () => {
     // Stop TTS when navigating
     if (tts.isPlaying) {
       tts.stop();
     }
+    playbackLocationRef.current = null;
 
     if (currentPage > 0) {
       const newPage = currentPage - 1;
@@ -188,6 +203,7 @@ export default function ReaderPage() {
     if (tts.isPlaying) {
       tts.stop();
     }
+    playbackLocationRef.current = null;
 
     const totalPages = getTotalPagesInChapter();
 
@@ -219,22 +235,58 @@ export default function ReaderPage() {
         return;
       }
 
-      // Strip HTML and get plain text for TTS
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = pageContent;
-      const plainText = tempDiv.textContent || tempDiv.innerText || '';
+      const plainText = htmlToPlainText(pageContent);
       
       if (!plainText.trim()) {
         toast.error('No readable content found');
         return;
       }
 
-      await tts.play(plainText.trim());
+      // Start streaming the current page.
+      playbackLocationRef.current = { chapterIdx: currentChapterIndex, page: currentPage };
+
+      const onSegmentComplete = () => {
+        const currentLoc = playbackLocationRef.current;
+        if (!currentLoc) return;
+
+        const next = getNextLocation(currentLoc.chapterIdx, currentLoc.page);
+        if (!next) return;
+
+        playbackLocationRef.current = { chapterIdx: next.chapterIdx, page: next.page };
+        setCurrentChapterIndex(next.chapterIdx);
+        setCurrentPage(next.page);
+        saveProgress(next.chapterIdx, next.page);
+        window.scrollTo(0, 0);
+        if (next.chapterChanged) toast.success('Next chapter');
+
+        // Keep one-page lookahead queued so audio continues smoothly.
+        const lookahead = getNextLocation(next.chapterIdx, next.page);
+        if (lookahead) {
+          const lookaheadText = getPagePlainText(lookahead.chapterIdx, lookahead.page);
+          if (lookaheadText) {
+            tts.enqueue(lookaheadText, { onSegmentComplete });
+          }
+        }
+      };
+
+      // Do not await; `useStreamingTts` calls `audio.play()` immediately
+      // to satisfy autoplay policy in the click gesture.
+      void tts.play(plainText.trim(), { onSegmentComplete });
+
+      // Pre-queue the next page immediately (before UI changes) for seamless playback.
+      const next = getNextLocation(currentChapterIndex, currentPage);
+      if (next) {
+        const nextText = getPagePlainText(next.chapterIdx, next.page);
+        if (nextText) {
+          tts.enqueue(nextText, { onSegmentComplete });
+        }
+      }
     }
-  }, [tts, getCurrentPageContent]);
+  }, [tts, getCurrentPageContent, currentChapterIndex, currentPage, getNextLocation, getPagePlainText, htmlToPlainText, saveProgress]);
 
   const handleStop = useCallback(() => {
     tts.stop();
+    playbackLocationRef.current = null;
   }, [tts]);
 
   const canGoPrevious = currentChapterIndex > 0 || currentPage > 0;
@@ -298,8 +350,8 @@ export default function ReaderPage() {
               content={pageContent}
               isActive={tts.isPlaying || tts.isPaused}
               currentWordIndex={tts.currentWordIndex}
-              onWordClick={(position: number) => {
-                tts.seekToPosition(position);
+              onWordClick={(wordIndex: number) => {
+                tts.seekToWord(wordIndex);
               }}
               className="text-gray-800 text-lg"
             />

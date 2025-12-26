@@ -6,6 +6,16 @@ export interface UseStreamingTtsOptions {
   onError?: (error: string) => void;
 }
 
+export interface StreamingTtsSegmentOptions {
+  onSegmentComplete?: () => void;
+}
+
+export interface StreamingTtsPlayOptions extends StreamingTtsSegmentOptions {
+  voiceId?: string;
+  provider?: 'elevenlabs' | 'azure';
+  voiceName?: string;
+}
+
 export interface UseStreamingTtsReturn {
   isPlaying: boolean;
   isLoading: boolean;
@@ -14,13 +24,15 @@ export interface UseStreamingTtsReturn {
   duration: number;
   currentWordIndex: number;
   totalWords: number;
-  play: (text: string, voiceId?: string, provider?: 'elevenlabs' | 'azure', voiceName?: string) => Promise<void>;
+  play: (text: string, voiceIdOrOptions?: string | StreamingTtsPlayOptions, provider?: 'elevenlabs' | 'azure', voiceName?: string) => Promise<void>;
+  enqueue: (text: string, options?: StreamingTtsSegmentOptions) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
   seekForward: (seconds?: number) => void;
   seekBackward: (seconds?: number) => void;
   seekToPosition: (position: number) => void;
+  seekToWord: (localWordIndex: number) => void;
   setSpeed: (speed: number) => void;
   speed: number;
 }
@@ -50,18 +62,37 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const sessionIdRef = useRef(0);
   const activeSessionIdRef = useRef(0);
   
-  // For progressive text chunking
-  const textChunksRef = useRef<string[]>([]);
-  const currentChunkIndexRef = useRef(0);
+  type WordTiming = { startMs: number; endMs: number };
+  type Segment = {
+    originalText: string;
+    chunks: string[];
+    nextChunkIndex: number;
+    wordTimings: WordTiming[];
+    onSegmentComplete?: () => void;
+  };
+  type PendingCompletion = {
+    audioEndMs: number;
+    wordIndexEnd: number; // global word index at end of this segment
+    wordCount: number;    // how many words in this segment (for display)
+    callback: () => void;
+  };
+
+  // For progressive streaming: queue segments (pages) and stream them back-to-back on one session.
+  const segmentQueueRef = useRef<Segment[]>([]);
+  const activeSegmentRef = useRef<Segment | null>(null);
   const chunkInFlightRef = useRef(false);
+  // Pending segment completions: fire callback when audio playback reaches audioEndMs
+  const pendingCompletionsRef = useRef<PendingCompletion[]>([]);
+  // Track word index offset for the currently DISPLAYED segment (based on audio time)
+  const displayedSegmentWordOffsetRef = useRef(0);
+  const displayedSegmentWordCountRef = useRef(0);
   const voiceIdRef = useRef<string | undefined>(undefined);
   const providerRef = useRef<'elevenlabs' | 'azure' | undefined>(undefined);
   const voiceNameRef = useRef<string | undefined>(undefined);
   
   // For word tracking
-  const fullTextRef = useRef<string>('');
   const wordsRef = useRef<string[]>([]);
-  const wordTimingsRef = useRef<{ startMs: number; endMs: number }[]>([]);
+  const wordTimingsRef = useRef<WordTiming[]>([]);
   const alignmentOffsetRef = useRef(0); // Track cumulative time offset for multiple chunks
   const lastEmittedWordIndexRef = useRef<number>(-2);
 
@@ -103,9 +134,12 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     isSourceOpenRef.current = false;
     streamCompleteRef.current = false;
     endOfStreamCalledRef.current = false;
-    textChunksRef.current = [];
-    currentChunkIndexRef.current = 0;
+    segmentQueueRef.current = [];
+    activeSegmentRef.current = null;
     chunkInFlightRef.current = false;
+    pendingCompletionsRef.current = [];
+    displayedSegmentWordOffsetRef.current = 0;
+    displayedSegmentWordCountRef.current = 0;
     wordTimingsRef.current = [];
     alignmentOffsetRef.current = 0;
 
@@ -143,13 +177,24 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     pendingChunksRef.current = [];
   }, []);
 
-  // Split text into sentences (at . ! ? or newlines)
+  const normalizeTextForTts = useCallback((text: string) => {
+    // Preserve paragraph pauses even when chunking trims/joins text.
+    // Convert line breaks to sentence-ending punctuation (doesn't introduce new words).
+    let t = text.replace(/\r\n/g, '\n');
+    t = t.replace(/\u00A0/g, ' '); // nbsp
+    t = t.replace(/\n{2,}/g, '. ');
+    t = t.replace(/\n/g, '. ');
+    t = t.replace(/\s+/g, ' ');
+    return t.trim();
+  }, []);
+
+  // Split text into sentences (at . ! ?)
   const splitTextIntoSentences = useCallback((text: string): string[] => {
     const chunks: string[] = [];
     
-    // Split on sentence endings followed by space/newline, or on newlines
-    // Keep the punctuation with the sentence
-    const sentences = text.split(/(?<=[.!?])\s+|(?<=\n)/);
+    // Split on sentence endings followed by whitespace.
+    // Keep the punctuation with the sentence.
+    const sentences = text.split(/(?<=[.!?])\s+/);
     
     for (const sentence of sentences) {
       const trimmed = sentence.trim();
@@ -180,29 +225,79 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     return chunks;
   }, []);
 
+  const activateSegment = useCallback((segment: Segment) => {
+    activeSegmentRef.current = segment;
+    // DON'T reset wordTimingsRef - keep accumulating globally.
+    // DON'T reset currentWordIndex - it will be updated based on audio time.
+    // Just track that this segment is now being sent.
+    wordsRef.current = segment.originalText.split(/\s+/).filter(w => w.length > 0);
+  }, []);
+
+  const getOrActivateSegment = useCallback(() => {
+    if (activeSegmentRef.current) return activeSegmentRef.current;
+    const next = segmentQueueRef.current.shift() ?? null;
+    if (next) activateSegment(next);
+    return next;
+  }, [activateSegment]);
+
   // Send the next text chunk to TTS
   const sendNextTextChunk = useCallback(() => {
     if (isStoppedRef.current) return;
     if (chunkInFlightRef.current) return;
-    if (currentChunkIndexRef.current >= textChunksRef.current.length) {
-      // All chunks sent
-      return;
-    }
-    
+
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    
-    const chunk = textChunksRef.current[currentChunkIndexRef.current];
-    currentChunkIndexRef.current++;
-    chunkInFlightRef.current = true;
 
-    const payload: any = { text: chunk };
-    if (voiceIdRef.current) payload.voiceId = voiceIdRef.current;
-    if (providerRef.current) payload.provider = providerRef.current;
-    if (voiceNameRef.current) payload.voiceName = voiceNameRef.current;
+    // Advance across completed segments until we find a chunk to send.
+    while (true) {
+      const segment = getOrActivateSegment();
 
-    ws.send(JSON.stringify(payload));
-  }, []);
+      if (!segment) {
+        // Nothing left to send.
+        streamCompleteRef.current = true;
+        if (
+          pendingChunksRef.current.length === 0 &&
+          !sourceBufferRef.current?.updating &&
+          !endOfStreamCalledRef.current &&
+          mediaSourceRef.current?.readyState === 'open'
+        ) {
+          try {
+            mediaSourceRef.current.endOfStream();
+            endOfStreamCalledRef.current = true;
+          } catch {
+            // Ignore
+          }
+        }
+        return;
+      }
+
+      if (segment.nextChunkIndex < segment.chunks.length) {
+        const chunk = segment.chunks[segment.nextChunkIndex];
+        segment.nextChunkIndex++;
+        chunkInFlightRef.current = true;
+
+        const payload: any = { text: chunk };
+        if (voiceIdRef.current) payload.voiceId = voiceIdRef.current;
+        if (providerRef.current) payload.provider = providerRef.current;
+        if (voiceNameRef.current) payload.voiceName = voiceNameRef.current;
+
+        ws.send(JSON.stringify(payload));
+        return;
+      }
+
+      // Segment is fully sent; queue completion for when audio reaches this point.
+      // DON'T call onSegmentComplete now - wait until audio has actually played.
+      const wordIndexEnd = wordTimingsRef.current.length;
+      const wordCount = segment.originalText.split(/\s+/).filter(w => w.length > 0).length;
+      pendingCompletionsRef.current.push({
+        audioEndMs: alignmentOffsetRef.current,
+        wordIndexEnd,
+        wordCount,
+        callback: segment.onSegmentComplete || (() => {})
+      });
+      activeSegmentRef.current = null;
+    }
+  }, [getOrActivateSegment]);
 
   const appendNextChunk = useCallback(() => {
     if (!sourceBufferRef.current || !isSourceOpenRef.current) return;
@@ -234,7 +329,32 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     }
   }, []);
 
-  const play = useCallback(async (text: string, voiceId?: string, provider?: 'elevenlabs' | 'azure', voiceName?: string) => {
+  const enqueue = useCallback((text: string, segOptions?: StreamingTtsSegmentOptions) => {
+    if (isStoppedRef.current) return;
+
+    const normalized = normalizeTextForTts(text);
+    if (!normalized) return;
+
+    const sentences = splitTextIntoSentences(normalized);
+    const chunks = chunkSentences(sentences, 900);
+    const segment: Segment = {
+      originalText: normalized,
+      chunks,
+      nextChunkIndex: 0,
+      wordTimings: [],
+      onSegmentComplete: segOptions?.onSegmentComplete
+    };
+
+    segmentQueueRef.current.push(segment);
+    streamCompleteRef.current = false;
+
+    // If we're already connected, kick the sender.
+    if (wsRef.current?.readyState === WebSocket.OPEN && !chunkInFlightRef.current) {
+      sendNextTextChunk();
+    }
+  }, [chunkSentences, normalizeTextForTts, sendNextTextChunk, splitTextIntoSentences]);
+
+  const play = useCallback(async (text: string, voiceIdOrOptions?: string | StreamingTtsPlayOptions, provider?: 'elevenlabs' | 'azure', voiceName?: string) => {
     // Stop any existing playback
     cleanup();
     isStoppedRef.current = false;
@@ -244,21 +364,42 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     const sessionId = ++sessionIdRef.current;
     activeSessionIdRef.current = sessionId;
 
-    // Store full text and split into words for tracking
-    fullTextRef.current = text;
-    wordsRef.current = text.split(/\s+/).filter(w => w.length > 0);
-    setTotalWords(wordsRef.current.length);
+    let playOptions: StreamingTtsPlayOptions | undefined;
+    let resolvedVoiceId: string | undefined;
+    let resolvedProvider: 'elevenlabs' | 'azure' | undefined;
+    let resolvedVoiceName: string | undefined;
+
+    if (typeof voiceIdOrOptions === 'object' && voiceIdOrOptions !== null) {
+      playOptions = voiceIdOrOptions;
+      resolvedVoiceId = voiceIdOrOptions.voiceId;
+      resolvedProvider = voiceIdOrOptions.provider;
+      resolvedVoiceName = voiceIdOrOptions.voiceName;
+    } else {
+      resolvedVoiceId = voiceIdOrOptions;
+      resolvedProvider = provider;
+      resolvedVoiceName = voiceName;
+    }
+
+    voiceIdRef.current = resolvedVoiceId;
+    providerRef.current = resolvedProvider;
+    voiceNameRef.current = resolvedVoiceName;
+    chunkInFlightRef.current = false;
+
+    // Reset queue/alignment for a fresh continuous session.
+    segmentQueueRef.current = [];
+    activeSegmentRef.current = null;
+    wordTimingsRef.current = [];
+    alignmentOffsetRef.current = 0;
+    lastEmittedWordIndexRef.current = -2;
+    displayedSegmentWordOffsetRef.current = 0;
     setCurrentWordIndex(-1);
 
-    // Split text into sentence-like chunks and group them to reduce WebSocket messages.
-    // (Smaller chunks = faster first audio, larger chunks = fewer messages.)
-    const sentences = splitTextIntoSentences(text);
-    textChunksRef.current = chunkSentences(sentences, 900);
-    currentChunkIndexRef.current = 0;
-    chunkInFlightRef.current = false;
-    voiceIdRef.current = voiceId;
-    providerRef.current = provider;
-    voiceNameRef.current = voiceName;
+    // Calculate word count for the first segment and set totalWords
+    const firstSegmentWords = text.split(/\s+/).filter(w => w.length > 0).length;
+    displayedSegmentWordCountRef.current = firstSegmentWords;
+    setTotalWords(firstSegmentWords);
+
+    enqueue(text, { onSegmentComplete: playOptions?.onSegmentComplete });
 
     setIsLoading(true);
     setIsPlaying(false);
@@ -363,13 +504,44 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
           }
           onProgress?.(time, audio.duration || 0);
 
-          // Update current word index based on timing.
-          // Keep a word highlighted until the next word starts.
           const timeMs = time * 1000;
-          const wordIndex = findWordIndexAtTimeMs(timeMs);
-          if (wordIndex !== lastEmittedWordIndexRef.current) {
-            lastEmittedWordIndexRef.current = wordIndex;
-            setCurrentWordIndex(wordIndex);
+
+          // Fire any pending segment completions whose audio has been reached.
+          // This ensures UI advances only after the audio for that page has played.
+          // Also update word offset/count for correct local highlighting.
+          while (pendingCompletionsRef.current.length > 0) {
+            const pending = pendingCompletionsRef.current[0];
+            if (timeMs >= pending.audioEndMs) {
+              pendingCompletionsRef.current.shift();
+              // Update displayed segment boundaries BEFORE firing callback
+              // (callback may change the page, and we want highlighting to match)
+              displayedSegmentWordOffsetRef.current = pending.wordIndexEnd;
+              // Set word count from next pending segment, or 0 if none
+              const nextPending = pendingCompletionsRef.current[0];
+              if (nextPending) {
+                displayedSegmentWordCountRef.current = nextPending.wordCount;
+                setTotalWords(nextPending.wordCount);
+              }
+              try {
+                pending.callback();
+              } catch {
+                // Ignore callback errors
+              }
+            } else {
+              break;
+            }
+          }
+
+          // Update current word index based on timing.
+          // Calculate LOCAL word index for the currently displayed segment.
+          const globalWordIndex = findWordIndexAtTimeMs(timeMs);
+          const localWordIndex = globalWordIndex >= 0 
+            ? globalWordIndex - displayedSegmentWordOffsetRef.current 
+            : -1;
+          
+          if (localWordIndex !== lastEmittedWordIndexRef.current) {
+            lastEmittedWordIndexRef.current = localWordIndex;
+            setCurrentWordIndex(localWordIndex);
           }
         }
       }, 50); // Update more frequently for smoother word tracking
@@ -465,17 +637,10 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
             } else if (message.type === 'complete') {
               // Current text chunk is done - send next one
               chunkInFlightRef.current = false;
-              
-              if (currentChunkIndexRef.current >= textChunksRef.current.length) {
-                // All text chunks sent and processed
-                streamCompleteRef.current = true;
-                if (pendingChunksRef.current.length === 0 && !sourceBufferRef.current?.updating) {
-                  appendNextChunk(); // This will trigger endOfStream
-                }
-              } else {
-                // Send next text chunk
-                sendNextTextChunk();
-              }
+
+              // Let the queued segment sender decide what to do next.
+              // When the queue is empty it will mark completion and end the stream.
+              sendNextTextChunk();
             } else if (message.type === 'error') {
               // Treat as fatal for this session; otherwise UI can get stuck in loading.
               setIsLoading(false);
@@ -584,6 +749,28 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     setCurrentTime(newTime);
   }, []);
 
+  // Seek to a specific LOCAL word index within the currently displayed segment
+  const seekToWord = useCallback((localWordIndex: number) => {
+    const audio = audioElementRef.current;
+    if (!audio) return;
+
+    // Convert local word index to global word index
+    const globalWordIndex = displayedSegmentWordOffsetRef.current + localWordIndex;
+    
+    // Look up the word timing
+    const timings = wordTimingsRef.current;
+    if (globalWordIndex < 0 || globalWordIndex >= timings.length) return;
+
+    const timing = timings[globalWordIndex];
+    const seekTimeSeconds = timing.startMs / 1000;
+
+    const bufferedEnd = audio.buffered.length > 0 ? audio.buffered.end(audio.buffered.length - 1) : 0;
+    if (seekTimeSeconds <= bufferedEnd) {
+      audio.currentTime = seekTimeSeconds;
+      setCurrentTime(seekTimeSeconds);
+    }
+  }, []);
+
   return {
     isPlaying,
     isLoading,
@@ -593,12 +780,14 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     currentWordIndex,
     totalWords,
     play,
+    enqueue,
     pause,
     resume,
     stop,
     seekForward,
     seekBackward,
     seekToPosition,
+    seekToWord,
     setSpeed,
     speed
   };

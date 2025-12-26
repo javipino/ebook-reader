@@ -23,22 +23,21 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=https://+:8081;http://+:8080
+      # Ensure .NET user-secrets resolve to /root/.microsoft/usersecrets inside the container
+      - HOME=/root
       - ASPNETCORE_Kestrel__Certificates__Default__Password=yourpassword
       - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=EbookReader;Username=postgres;Password=postgres
       - FileStorage__Type=Local
       - FileStorage__LocalPath=/app/storage
-      # Azure Speech config: rely on appsettings.json by default.
-      # If you want to override via environment variables, add these explicitly
-      # (e.g. in a local override compose file or by setting them in your shell):
-      # - AzureSpeech__Key=...
-      # - AzureSpeech__Region=...
-      # - AzureSpeech__DefaultVoiceName=...
     depends_on:
       - db
     volumes:
       - backend-storage:/app/storage
       - ~/.aspnet/https:/https:ro
+      # Dev convenience: mount host user-secrets so Docker can use `dotnet user-secrets` values
+      # Windows path: %APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json
+      - "${APPDATA}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro"
 
   db:
     image: postgres:16-alpine
