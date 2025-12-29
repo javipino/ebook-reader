@@ -61,6 +61,9 @@ builder.Services.AddHttpClient<ITtsService, ElevenLabsTtsService>();
 builder.Services.AddSingleton<ElevenLabsStreamingService>();
 builder.Services.AddSingleton<AzureSpeechStreamingService>();
 
+// SSML Enhancement Service - Azure OpenAI
+builder.Services.AddSingleton<ISsmlEnhancementService, SsmlEnhancementService>();
+
 // Hangfire - Background Job Processing
 builder.Services.AddHangfire(configuration => configuration
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)

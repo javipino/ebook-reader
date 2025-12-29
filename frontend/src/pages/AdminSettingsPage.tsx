@@ -7,11 +7,13 @@ type TtsProvider = 'elevenlabs' | 'azure';
 interface UserTtsSettingsDto {
   preferredTtsProvider: TtsProvider;
   preferredAzureVoiceName: string | null;
+  enableSsmlEnhancement: boolean;
 }
 
 export default function AdminSettingsPage() {
   const [provider, setProvider] = useState<TtsProvider>('elevenlabs');
   const [azureVoiceName, setAzureVoiceName] = useState<string>('');
+  const [enableSsml, setEnableSsml] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,6 +22,7 @@ export default function AdminSettingsPage() {
         const res = await api.get<UserTtsSettingsDto>('/api/users/me/settings');
         setProvider(res.data.preferredTtsProvider === 'azure' ? 'azure' : 'elevenlabs');
         setAzureVoiceName(res.data.preferredAzureVoiceName ?? '');
+        setEnableSsml(res.data.enableSsmlEnhancement ?? false);
       } catch (e: any) {
         toast.error(e.response?.data?.message || 'Failed to load settings');
       } finally {
@@ -32,7 +35,8 @@ export default function AdminSettingsPage() {
     try {
       await api.put('/api/users/me/settings', {
         preferredTtsProvider: provider,
-        preferredAzureVoiceName: azureVoiceName.trim() || null
+        preferredAzureVoiceName: azureVoiceName.trim() || null,
+        enableSsmlEnhancement: enableSsml
       });
       toast.success('Settings saved');
     } catch (e: any) {
@@ -69,6 +73,25 @@ export default function AdminSettingsPage() {
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
           />
           <p className="mt-2 text-xs text-gray-500">If blank, backend uses AzureSpeech:DefaultVoiceName.</p>
+        </div>
+
+        <div className="mt-6">
+          <div className="flex items-center">
+            <input
+              id="enable-ssml"
+              type="checkbox"
+              checked={enableSsml}
+              onChange={(e) => setEnableSsml(e.target.checked)}
+              disabled={loading}
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+            />
+            <label htmlFor="enable-ssml" className="ml-2 block text-sm font-medium text-gray-700">
+              Enable SSML AI Enhancement
+            </label>
+          </div>
+          <p className="mt-2 ml-6 text-xs text-gray-500">
+            Use AI to enhance text-to-speech with SSML tags for improved prosody and emotion.
+          </p>
         </div>
 
         <div className="mt-8 flex justify-end">

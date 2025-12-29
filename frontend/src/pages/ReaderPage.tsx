@@ -158,6 +158,16 @@ export default function ReaderPage() {
     return htmlToPlainText(pageHtml);
   }, [book, htmlToPlainText]);
 
+  /** Get context for AI SSML enhancement: current chapter content (truncated if too long) */
+  const getChapterContext = useCallback((chapterIdx: number) => {
+    if (!book) return '';
+    const chapter = book.chapters[chapterIdx];
+    if (!chapter) return '';
+    // Get plain text of full chapter (max 3000 chars for context)
+    const fullText = htmlToPlainText(chapter.content);
+    return fullText.length > 3000 ? fullText.slice(0, 3000) : fullText;
+  }, [book, htmlToPlainText]);
+
   const getNextLocation = useCallback((chapterIdx: number, pageNum: number) => {
     if (!book) return null;
     const chapter = book.chapters[chapterIdx];
@@ -245,6 +255,9 @@ export default function ReaderPage() {
       // Start streaming the current page.
       playbackLocationRef.current = { chapterIdx: currentChapterIndex, page: currentPage };
 
+      // Get chapter context for AI SSML enhancement
+      const chapterContext = getChapterContext(currentChapterIndex);
+
       const onSegmentComplete = () => {
         const currentLoc = playbackLocationRef.current;
         if (!currentLoc) return;
@@ -259,30 +272,44 @@ export default function ReaderPage() {
         window.scrollTo(0, 0);
         if (next.chapterChanged) toast.success('Next chapter');
 
-        // Keep one-page lookahead queued so audio continues smoothly.
-        const lookahead = getNextLocation(next.chapterIdx, next.page);
-        if (lookahead) {
-          const lookaheadText = getPagePlainText(lookahead.chapterIdx, lookahead.page);
+        // Keep 3-page lookahead queued so audio continues smoothly.
+        // After this segment completes, we have 2 pages already queued, so add 1 more.
+        // Find the page 3 positions ahead
+        let lookaheadLoc = { chapterIdx: next.chapterIdx, page: next.page };
+        for (let i = 0; i < 2; i++) {
+          const nextLoc = getNextLocation(lookaheadLoc.chapterIdx, lookaheadLoc.page);
+          if (!nextLoc) break;
+          lookaheadLoc = { chapterIdx: nextLoc.chapterIdx, page: nextLoc.page };
+        }
+        // Now lookaheadLoc is 2 pages ahead of 'next' (3 pages ahead of where we were)
+        const finalLookahead = getNextLocation(lookaheadLoc.chapterIdx, lookaheadLoc.page);
+        if (finalLookahead) {
+          const lookaheadText = getPagePlainText(finalLookahead.chapterIdx, finalLookahead.page);
           if (lookaheadText) {
-            tts.enqueue(lookaheadText, { onSegmentComplete });
+            const lookaheadContext = getChapterContext(finalLookahead.chapterIdx);
+            tts.enqueue(lookaheadText, { onSegmentComplete, context: lookaheadContext });
           }
         }
       };
 
       // Do not await; `useStreamingTts` calls `audio.play()` immediately
       // to satisfy autoplay policy in the click gesture.
-      void tts.play(plainText.trim(), { onSegmentComplete });
+      void tts.play(plainText.trim(), { onSegmentComplete, context: chapterContext });
 
-      // Pre-queue the next page immediately (before UI changes) for seamless playback.
-      const next = getNextLocation(currentChapterIndex, currentPage);
-      if (next) {
-        const nextText = getPagePlainText(next.chapterIdx, next.page);
+      // Pre-queue 3 pages ahead for seamless playback (SSML enhancement takes ~20-40s per page)
+      let prevLoc = { chapterIdx: currentChapterIndex, page: currentPage };
+      for (let i = 0; i < 3; i++) {
+        const nextLoc = getNextLocation(prevLoc.chapterIdx, prevLoc.page);
+        if (!nextLoc) break;
+        const nextText = getPagePlainText(nextLoc.chapterIdx, nextLoc.page);
         if (nextText) {
-          tts.enqueue(nextText, { onSegmentComplete });
+          const nextContext = getChapterContext(nextLoc.chapterIdx);
+          tts.enqueue(nextText, { onSegmentComplete, context: nextContext });
         }
+        prevLoc = { chapterIdx: nextLoc.chapterIdx, page: nextLoc.page };
       }
     }
-  }, [tts, getCurrentPageContent, currentChapterIndex, currentPage, getNextLocation, getPagePlainText, htmlToPlainText, saveProgress]);
+  }, [tts, getCurrentPageContent, currentChapterIndex, currentPage, getNextLocation, getPagePlainText, htmlToPlainText, saveProgress, getChapterContext]);
 
   const handleStop = useCallback(() => {
     tts.stop();

@@ -12,6 +12,7 @@ namespace EbookReader.Core.Entities
         // User preferences
         public string PreferredTtsProvider { get; set; } = "elevenlabs"; // elevenlabs | azure
         public string? PreferredAzureVoiceName { get; set; }
+        public bool EnableSsmlEnhancement { get; set; } = false;
 
         // Navigation properties
         public ICollection<Book> Books { get; set; } = new List<Book>();

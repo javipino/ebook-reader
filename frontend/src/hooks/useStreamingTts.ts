@@ -8,6 +8,8 @@ export interface UseStreamingTtsOptions {
 
 export interface StreamingTtsSegmentOptions {
   onSegmentComplete?: () => void;
+  /** Context text (e.g., surrounding pages/chapter) for AI SSML enhancement */
+  context?: string;
 }
 
 export interface StreamingTtsPlayOptions extends StreamingTtsSegmentOptions {
@@ -69,6 +71,8 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     nextChunkIndex: number;
     wordTimings: WordTiming[];
     onSegmentComplete?: () => void;
+    /** Context text for AI SSML enhancement (e.g., chapter content) */
+    context?: string;
   };
   type PendingCompletion = {
     audioEndMs: number;
@@ -83,12 +87,16 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const chunkInFlightRef = useRef(false);
   // Pending segment completions: fire callback when audio playback reaches audioEndMs
   const pendingCompletionsRef = useRef<PendingCompletion[]>([]);
+  // Track incomplete sentences that span page boundaries
+  const incompleteSentenceRef = useRef<string>('');
   // Track word index offset for the currently DISPLAYED segment (based on audio time)
   const displayedSegmentWordOffsetRef = useRef(0);
   const displayedSegmentWordCountRef = useRef(0);
   const voiceIdRef = useRef<string | undefined>(undefined);
   const providerRef = useRef<'elevenlabs' | 'azure' | undefined>(undefined);
   const voiceNameRef = useRef<string | undefined>(undefined);
+  // Track recently sent chunks for context (last ~500 chars)
+  const recentSentTextRef = useRef<string>('');
   
   // For word tracking
   const wordsRef = useRef<string[]>([]);
@@ -142,6 +150,8 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     displayedSegmentWordCountRef.current = 0;
     wordTimingsRef.current = [];
     alignmentOffsetRef.current = 0;
+    incompleteSentenceRef.current = '';
+    recentSentTextRef.current = '';
 
     if (updateIntervalRef.current) {
       clearInterval(updateIntervalRef.current);
@@ -178,13 +188,16 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   }, []);
 
   const normalizeTextForTts = useCallback((text: string) => {
-    // Preserve paragraph pauses even when chunking trims/joins text.
-    // Convert line breaks to sentence-ending punctuation (doesn't introduce new words).
+    // Normalize whitespace for TTS. Backend will handle pauses via SSML.
+    // Keep paragraph breaks (double newlines) as single newlines for backend to process.
     let t = text.replace(/\r\n/g, '\n');
     t = t.replace(/\u00A0/g, ' '); // nbsp
-    t = t.replace(/\n{2,}/g, '. ');
-    t = t.replace(/\n/g, '. ');
-    t = t.replace(/\s+/g, ' ');
+    // Convert multiple newlines to double newline (paragraph marker)
+    t = t.replace(/\n{2,}/g, '\n\n');
+    // Convert single newlines to space (same sentence)
+    t = t.replace(/(?<!\n)\n(?!\n)/g, ' ');
+    // Collapse multiple spaces
+    t = t.replace(/  +/g, ' ');
     return t.trim();
   }, []);
 
@@ -276,10 +289,19 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
         segment.nextChunkIndex++;
         chunkInFlightRef.current = true;
 
-        const payload: any = { text: chunk };
+        // Use segment's context if provided, otherwise fall back to recently sent text
+        const contextText = segment.context || recentSentTextRef.current.slice(-500) || '';
+
+        const payload: any = { 
+          text: chunk,
+          contextText: contextText
+        };
         if (voiceIdRef.current) payload.voiceId = voiceIdRef.current;
         if (providerRef.current) payload.provider = providerRef.current;
         if (voiceNameRef.current) payload.voiceName = voiceNameRef.current;
+
+        // Update recent text with what we just sent (for fallback context)
+        recentSentTextRef.current = (recentSentTextRef.current + ' ' + chunk).slice(-1000);
 
         ws.send(JSON.stringify(payload));
         return;
@@ -332,17 +354,42 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
   const enqueue = useCallback((text: string, segOptions?: StreamingTtsSegmentOptions) => {
     if (isStoppedRef.current) return;
 
-    const normalized = normalizeTextForTts(text);
+    let normalized = normalizeTextForTts(text);
+    if (!normalized) return;
+
+    // Prepend any incomplete sentence from the previous segment
+    if (incompleteSentenceRef.current) {
+      normalized = incompleteSentenceRef.current + ' ' + normalized;
+      incompleteSentenceRef.current = '';
+    }
+
+    // Check if text ends with sentence-ending punctuation
+    // If not, extract the trailing incomplete sentence for the next segment
+    const sentenceEndMatch = normalized.match(/^(.*)([.!?])\s*([^.!?]*)$/s);
+    if (sentenceEndMatch && sentenceEndMatch[3].trim()) {
+      // Text has a complete part and a trailing incomplete part
+      const completeText = sentenceEndMatch[1] + sentenceEndMatch[2];
+      incompleteSentenceRef.current = sentenceEndMatch[3].trim();
+      normalized = completeText.trim();
+      console.log(`[TTS] Split at sentence boundary. Complete: ${normalized.length} chars, Incomplete carried over: ${incompleteSentenceRef.current.length} chars`);
+    } else if (!normalized.match(/[.!?]\s*$/)) {
+      // Text doesn't end with sentence punctuation at all - but we'll send it anyway
+      // and hope the next segment completes it
+      console.log(`[TTS] Text doesn't end with sentence punctuation: "...${normalized.slice(-30)}"`);
+    }
+
     if (!normalized) return;
 
     const sentences = splitTextIntoSentences(normalized);
     const chunks = chunkSentences(sentences, 900);
+    
     const segment: Segment = {
       originalText: normalized,
       chunks,
       nextChunkIndex: 0,
       wordTimings: [],
-      onSegmentComplete: segOptions?.onSegmentComplete
+      onSegmentComplete: segOptions?.onSegmentComplete,
+      context: segOptions?.context // Use provided context for AI SSML enhancement
     };
 
     segmentQueueRef.current.push(segment);
@@ -392,14 +439,18 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
     alignmentOffsetRef.current = 0;
     lastEmittedWordIndexRef.current = -2;
     displayedSegmentWordOffsetRef.current = 0;
+    pendingCompletionsRef.current = [];  // Clear pending completions
     setCurrentWordIndex(-1);
 
     // Calculate word count for the first segment and set totalWords
-    const firstSegmentWords = text.split(/\s+/).filter(w => w.length > 0).length;
+    const firstSegmentWords = text.split(/\\s+/).filter(w => w.length > 0).length;
     displayedSegmentWordCountRef.current = firstSegmentWords;
     setTotalWords(firstSegmentWords);
 
-    enqueue(text, { onSegmentComplete: playOptions?.onSegmentComplete });
+    enqueue(text, { 
+      onSegmentComplete: playOptions?.onSegmentComplete,
+      context: playOptions?.context // Pass context for AI SSML enhancement
+    });
 
     setIsLoading(true);
     setIsPlaying(false);
@@ -542,6 +593,12 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
           if (localWordIndex !== lastEmittedWordIndexRef.current) {
             lastEmittedWordIndexRef.current = localWordIndex;
             setCurrentWordIndex(localWordIndex);
+            
+            // DEBUG: Log timing info when word changes
+            if (globalWordIndex >= 0 && globalWordIndex < wordTimingsRef.current.length) {
+              const timing = wordTimingsRef.current[globalWordIndex];
+              console.log(`[TTS] Highlight word #${globalWordIndex} (local: ${localWordIndex}): timeMs=${timeMs.toFixed(0)}, word.startMs=${timing.startMs}`);
+            }
           }
         }
       }, 50); // Update more frequently for smoother word tracking
@@ -589,50 +646,27 @@ export function useStreamingTts(options: UseStreamingTtsOptions = {}): UseStream
           // Text message (control or alignment)
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'alignment' && message.data) {
-              // Process alignment data - convert character timings to word timings
-              const { chars, charStartTimesMs, charDurationsMs } = message.data;
-              if (chars && charStartTimesMs && charDurationsMs) {
-                // Build words from characters and their timings
-                let currentWord = '';
-                let wordStartMs = 0;
-                const baseOffset = alignmentOffsetRef.current;
-                
-                for (let i = 0; i < chars.length; i++) {
-                  const char = chars[i];
-                  const startMs = charStartTimesMs[i] + baseOffset;
-                  
-                  if (char === ' ' || char === '\n' || char === '\t') {
-                    // End of word
-                    if (currentWord.length > 0) {
-                      wordTimingsRef.current.push({
-                        startMs: wordStartMs,
-                        endMs: startMs
-                      });
-                      currentWord = '';
-                    }
-                  } else {
-                    if (currentWord.length === 0) {
-                      wordStartMs = startMs;
-                    }
-                    currentWord += char;
-                  }
-                }
-                
-                // Don't forget the last word
-                if (currentWord.length > 0 && chars.length > 0) {
-                  const lastCharIndex = chars.length - 1;
-                  wordTimingsRef.current.push({
-                    startMs: wordStartMs,
-                    endMs: charStartTimesMs[lastCharIndex] + charDurationsMs[lastCharIndex] + baseOffset
-                  });
-                }
-                
-                // Update offset for next chunk - use the end time of the last character
-                if (chars.length > 0) {
-                  const lastIdx = chars.length - 1;
-                  alignmentOffsetRef.current = baseOffset + charStartTimesMs[lastIdx] + charDurationsMs[lastIdx];
-                }
+            if (message.type === 'wordBoundary' && message.data) {
+              // Incremental word boundary - add word timing immediately
+              const { audioOffsetMs, durationMs } = message.data;
+              const baseOffset = alignmentOffsetRef.current;
+              
+              // DEBUG: Log first few word timings
+              if (wordTimingsRef.current.length < 5) {
+                console.log(`[TTS] Word timing #${wordTimingsRef.current.length}: audioOffsetMs=${audioOffsetMs}, baseOffset=${baseOffset}, total=${audioOffsetMs + baseOffset}`);
+              }
+              
+              wordTimingsRef.current.push({
+                startMs: audioOffsetMs + baseOffset,
+                endMs: audioOffsetMs + durationMs + baseOffset
+              });
+            } else if (message.type === 'alignment' && message.data) {
+              // Final alignment - update offset for next chunk
+              const { chunkDurationMs } = message.data;
+              console.log(`[TTS] Alignment received: chunkDurationMs=${chunkDurationMs}, current offset=${alignmentOffsetRef.current}`);
+              if (chunkDurationMs) {
+                alignmentOffsetRef.current += chunkDurationMs;
+                console.log(`[TTS] New offset=${alignmentOffsetRef.current}`);
               }
             } else if (message.type === 'complete') {
               // Current text chunk is done - send next one

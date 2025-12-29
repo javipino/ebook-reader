@@ -39,7 +39,8 @@ public class UserSettingsController : ControllerBase
         return Ok(new UserTtsSettingsDto
         {
             PreferredTtsProvider = NormalizeProvider(user.PreferredTtsProvider),
-            PreferredAzureVoiceName = user.PreferredAzureVoiceName
+            PreferredAzureVoiceName = user.PreferredAzureVoiceName,
+            EnableSsmlEnhancement = user.EnableSsmlEnhancement
         });
     }
 
@@ -67,13 +68,15 @@ public class UserSettingsController : ControllerBase
         user.PreferredAzureVoiceName = string.IsNullOrWhiteSpace(request.PreferredAzureVoiceName)
             ? null
             : request.PreferredAzureVoiceName.Trim();
+        user.EnableSsmlEnhancement = request.EnableSsmlEnhancement;
 
         await _context.SaveChangesAsync();
 
         return Ok(new UserTtsSettingsDto
         {
             PreferredTtsProvider = provider,
-            PreferredAzureVoiceName = user.PreferredAzureVoiceName
+            PreferredAzureVoiceName = user.PreferredAzureVoiceName,
+            EnableSsmlEnhancement = user.EnableSsmlEnhancement
         });
     }
 
@@ -101,10 +104,12 @@ public class UserTtsSettingsDto
 {
     public string PreferredTtsProvider { get; set; } = "elevenlabs";
     public string? PreferredAzureVoiceName { get; set; }
+    public bool EnableSsmlEnhancement { get; set; } = false;
 }
 
 public class UpdateUserTtsSettingsRequest
 {
     public string PreferredTtsProvider { get; set; } = "elevenlabs";
     public string? PreferredAzureVoiceName { get; set; }
+    public bool EnableSsmlEnhancement { get; set; } = false;
 }
